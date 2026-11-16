@@ -22,17 +22,25 @@ function Send-NativeMessage {
     $stdout.Flush()
 }
 
+# Emits protocol v1 (same shape as the macOS host). Fields Windows cannot
+# report cheaply (time remaining, low power, light/dark) are sent as null/false.
 function Get-BatteryInfoJson {
+    $noBattery = '{"v":1,"has_battery":false,"percentage":null,"on_ac":true,"charging":false,"charged":false,"minutes_remaining":null,"low_power":false,"dark":null}'
     try {
-        $battery = Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop
-        $percentage = [int]$battery.EstimatedChargeRemaining
-        # BatteryStatus: 1=Discharging, 2=AC Power, 3=Charging
-        $isCharging = ($battery.BatteryStatus -eq 2 -or $battery.BatteryStatus -eq 3)
-        $chargingStr = if ($isCharging) { 'true' } else { 'false' }
-        return '{"percentage":' + $percentage + ',"is_charging":' + $chargingStr + '}'
+        # A machine can have several batteries; use the first one.
+        $battery = @(Get-CimInstance -ClassName Win32_Battery -ErrorAction Stop) | Select-Object -First 1
+        if ($null -eq $battery) { return $noBattery }
+        $percentage = [Math]::Min(100, [Math]::Max(0, [int]$battery.EstimatedChargeRemaining))
+        # BatteryStatus: 1=discharging, 2=on AC, 3=fully charged, 6-9=charging variants
+        $status = [int]$battery.BatteryStatus
+        $charging = ($status -ge 6 -and $status -le 9)
+        $charged = ($status -eq 3)
+        $onAc = ($status -eq 2 -or $charged -or $charging)
+        $b = { param($v) if ($v) { 'true' } else { 'false' } }
+        return '{"v":1,"has_battery":true,"percentage":' + $percentage + ',"on_ac":' + (& $b $onAc) + ',"charging":' + (& $b $charging) + ',"charged":' + (& $b $charged) + ',"minutes_remaining":null,"low_power":false,"dark":null}'
     }
     catch {
-        return '{"percentage":100,"is_charging":true}'
+        return $noBattery
     }
 }
 

@@ -1,0 +1,102 @@
+<!doctype html>
+<!-- Dev tool: renders mock Firefox chrome from extension/theme-colors.js so the
+     colour model can be reviewed without loading the extension.
+     Open this file directly in a browser. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battery Theme preview</title>
+<style>
+  body { margin: 0; padding: 16px; font: 13px/1.4 system-ui, sans-serif; background: #7d7d86; color: #111; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; }
+  .controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+  .cell-label { font-weight: 600; margin-bottom: 2px; color: #fff; text-shadow: 0 1px 1px #0006; }
+  .chrome { border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px #0005; }
+  .strip { display: flex; gap: 2px; padding: 5px 6px 0; align-items: flex-end; }
+  .tab { padding: 6px 12px; border-radius: 6px 6px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+  .tab.sel { border-top: 2px solid; padding-top: 4px; }
+  .bar { display: flex; gap: 8px; padding: 6px 8px; align-items: center; border-top: 1px solid; border-bottom: 1px solid; }
+  .field { flex: 1; padding: 4px 10px; border-radius: 6px; border: 1px solid; }
+  .ntp { padding: 8px; display: flex; gap: 8px; }
+  .card { padding: 6px 10px; border-radius: 6px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Battery Theme preview</h1>
+<p>Left column: dark chrome. Right column: light chrome. Each row is one battery state.</p>
+<div class="controls">
+  <label>Palette
+    <select id="palette"><option value="classic">classic</option><option value="cvd">colour-blind safe</option></select>
+  </label>
+  <label>Intensity <input id="intensity" type="range" min="0.5" max="1.5" step="0.25" value="1"> <span id="intensityValue">1</span></label>
+</div>
+<div class="grid" id="grid"></div>
+
+<script src="extension/theme-colors.js"></script>
+<script>
+  const C = globalThis.BatteryColors;
+  const ROWS = [
+    ["100% on battery", 100, "battery"], ["80%", 80, "battery"], ["60%", 60, "battery"],
+    ["50%", 50, "battery"], ["40%", 40, "battery"], ["30%", 30, "battery"],
+    ["20%", 20, "battery"], ["10%", 10, "battery"], ["5%", 5, "battery"],
+    ["Charging (any level)", 40, "charging"], ["Plugged in, full or held", 80, "ac"],
+  ];
+
+  function chrome(label, state, settings) {
+    const c = C.buildTheme(state, settings).theme.colors;
+    const wrap = document.createElement("div");
+    const cap = document.createElement("div");
+    cap.className = "cell-label";
+    cap.textContent = label;
+    const el = document.createElement("div");
+    el.className = "chrome";
+    el.innerHTML = `
+      <div class="strip" style="background:${c.frame}">
+        <div class="tab" style="color:${c.tab_background_text}">Inbox</div>
+        <div class="tab sel" style="background:${c.tab_selected};color:${c.tab_text};border-color:${c.tab_line}">Active tab</div>
+        <div class="tab" style="color:${c.tab_background_text}">Docs</div>
+        <div class="tab" style="color:${c.tab_background_text}">News</div>
+      </div>
+      <div class="bar" style="background:${c.toolbar};color:${c.toolbar_text};border-color:${c.toolbar_bottom_separator}">
+        <div class="dot" style="background:${c.icons}"></div>
+        <div class="field" style="background:${c.toolbar_field};color:${c.toolbar_field_text};border-color:${c.toolbar_field_border}">example.com</div>
+        <div class="dot" style="background:${c.icons_attention}"></div>
+      </div>
+      <div class="ntp" style="background:${c.ntp_background};color:${c.ntp_text}">
+        <div class="card" style="background:${c.ntp_card_background}">New tab card</div>
+        <div class="card" style="background:${c.popup_highlight};color:${c.popup_highlight_text}">Menu highlight</div>
+      </div>`;
+    wrap.append(cap, el);
+    return wrap;
+  }
+
+  function draw() {
+    const settings = {
+      palette: document.getElementById("palette").value,
+      intensity: Number(document.getElementById("intensity").value),
+    };
+    document.getElementById("intensityValue").textContent = settings.intensity;
+    const grid = document.getElementById("grid");
+    grid.textContent = "";
+    for (const [label, percentage, kind] of ROWS) {
+      for (const dark of [true, false]) {
+        const state = { has_battery: true, percentage, on_ac: kind !== "battery", charging: kind === "charging", dark };
+        grid.append(chrome(label, state, settings));
+      }
+    }
+  }
+  // ?palette=cvd&intensity=1.5 presets the controls (handy for screenshots).
+  const params = new URLSearchParams(location.search);
+  if (C.PALETTES[params.get("palette")]) document.getElementById("palette").value = params.get("palette");
+  if (params.get("intensity")) document.getElementById("intensity").value = params.get("intensity");
+  document.getElementById("palette").addEventListener("change", draw);
+  document.getElementById("intensity").addEventListener("input", draw);
+  draw();
+</script>
+</body>
+</html>

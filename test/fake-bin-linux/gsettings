@@ -1,0 +1,3 @@
+#!/bin/bash
+# Fake `gsettings get org.gnome.desktop.interface color-scheme`.
+cat "$FAKE_DIR/color-scheme" 2>/dev/null || echo "'default'"

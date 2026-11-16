@@ -1,0 +1,18 @@
+{
+  "name": "battery-theme",
+  "description": "Firefox theme that reflects laptop battery state (extension + native messaging host)",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "npx --yes web-ext@8 lint --source-dir extension",
+    "build": "npx --yes web-ext@8 build --source-dir extension --artifacts-dir web-ext-artifacts --overwrite-dest",
+    "start": "npx --yes web-ext@8 run --source-dir extension",
+    "sign": "npx --yes web-ext@8 sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted",
+    "check": "npm test && npm run lint"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/william-ricchiuti/battery-theme.git"
+  },
+  "private": true
+}

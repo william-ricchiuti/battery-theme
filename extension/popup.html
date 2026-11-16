@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Battery Theme</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main>
+  <!-- Battery reading -->
+  <section id="battery" hidden>
+    <div class="reading">
+      <div class="level"><span id="percent">–</span><span class="unit">%</span></div>
+      <div class="summary">
+        <div id="status" class="status"></div>
+        <div id="time" class="time"></div>
+      </div>
+    </div>
+    <div class="meter" role="img" aria-label="Battery level"><div id="fill" class="fill"></div></div>
+    <div id="lowPower" class="chip" hidden>Low Power Mode</div>
+  </section>
+
+  <!-- No reading: helper missing, no battery, or still connecting -->
+  <section id="notice" hidden>
+    <h1 id="noticeTitle"></h1>
+    <p id="noticeBody"></p>
+    <code id="noticeCommand" hidden></code>
+    <a id="noticeLink" hidden target="_blank" rel="noopener noreferrer">Setup instructions</a>
+    <button id="retry" type="button" hidden>Try again</button>
+  </section>
+
+  <form id="settings">
+    <fieldset>
+      <legend>Colours</legend>
+      <div class="segmented">
+        <label><input type="radio" name="palette" value="classic"><span>Green to red</span></label>
+        <label><input type="radio" name="palette" value="cvd"><span>Colour-blind safe</span></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Appearance</legend>
+      <div class="segmented">
+        <label><input type="radio" name="appearance" value="auto"><span>Match system</span></label>
+        <label><input type="radio" name="appearance" value="dark"><span>Dark</span></label>
+        <label><input type="radio" name="appearance" value="light"><span>Light</span></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend><label for="intensity">Tint strength</label></legend>
+      <div class="slider">
+        <span>Subtle</span>
+        <input id="intensity" name="intensity" type="range" min="0.5" max="1.5" step="0.25">
+        <span>Strong</span>
+      </div>
+    </fieldset>
+
+    <label class="check">
+      <input type="checkbox" name="badge">
+      <span>Show percentage on the toolbar button</span>
+    </label>
+  </form>
+</main>
+<script src="theme-colors.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

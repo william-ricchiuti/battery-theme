@@ -1,0 +1,81 @@
+/* Battery Theme popup. Surface colours come from the same model as the
+   browser chrome (set as custom properties by popup.js); the values here are
+   the fallback used before the first reading. */
+:root {
+  --bg: #1c1c22;
+  --text: #e8e8ec;
+  --muted: #a3a3ac;
+  --line: #2e2e38;
+  --field: #101014;
+  --accent: #a3a3ac;
+  --on-accent: #0c0c10;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f6f8;
+    --text: #15141a;
+    --muted: #55555f;
+    --line: #c9c9d2;
+    --field: #ffffff;
+    --accent: #55555f;
+    --on-accent: #ffffff;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font: menu;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+main { padding: 16px; display: grid; gap: 16px; }
+
+/* --- Reading ------------------------------------------------------------ */
+.reading { display: flex; align-items: baseline; gap: 12px; }
+.level { font-size: 40px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.unit { font-size: 18px; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.summary { min-width: 0; }
+.status { font-weight: 600; }
+.time { color: var(--muted); }
+
+.meter { margin-top: 12px; height: 8px; border-radius: 4px; background: var(--field); border: 1px solid var(--line); overflow: hidden; }
+.fill { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.3s ease; }
+
+.chip { display: inline-block; margin-top: 10px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+/* --- Notice ------------------------------------------------------------- */
+#notice h1 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+#notice p { margin: 0; color: var(--muted); }
+#notice code { display: block; margin-top: 10px; padding: 8px 10px; border-radius: 6px; background: var(--field); border: 1px solid var(--line); font: 12px ui-monospace, Menlo, Consolas, monospace; overflow-wrap: anywhere; user-select: all; }
+#notice a { display: inline-block; margin-top: 10px; color: var(--text); font-weight: 600; }
+#notice button { display: block; margin-top: 12px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--field); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+#notice button:hover { border-color: var(--accent); }
+
+/* --- Settings ----------------------------------------------------------- */
+form { display: grid; gap: 12px; padding-top: 14px; border-top: 1px solid var(--line); }
+fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+legend { padding: 0; margin-bottom: 5px; color: var(--muted); font-size: 12px; }
+
+.segmented { display: flex; border: 1px solid var(--line); border-radius: 7px; background: var(--field); padding: 2px; gap: 2px; }
+.segmented label { flex: 1; position: relative; }
+.segmented input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.segmented span { display: block; padding: 5px 6px; border-radius: 5px; text-align: center; white-space: nowrap; }
+.segmented input:checked + span { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.segmented input:focus-visible + span { outline: 2px solid var(--text); outline-offset: 1px; }
+
+.slider { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.slider input { flex: 1; accent-color: var(--accent); }
+
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.check input { margin: 0; accent-color: var(--accent); }
+
+@media (prefers-reduced-motion: reduce) { .fill { transition: none; } }

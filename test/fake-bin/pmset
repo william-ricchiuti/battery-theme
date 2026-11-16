@@ -1,0 +1,14 @@
+#!/bin/bash
+# Fake pmset for tests. Reads canned output from $FAKE_DIR.
+case "$*" in
+    "-g batt") cat "$FAKE_DIR/batt" ;;
+    "-g pslog")
+        echo "pmset is in logging mode now. Hit ctrl-c to exit."
+        # Wait for the test to stage a new reading, then announce it.
+        while [ ! -f "$FAKE_DIR/batt.next" ]; do sleep 0.1; done
+        mv "$FAKE_DIR/batt.next" "$FAKE_DIR/batt"
+        echo "Now drawing from 'AC Power'"
+        exec sleep 600
+        ;;
+    "-g") echo " lowpowermode         $(cat "$FAKE_DIR/lowpower" 2>/dev/null || echo 0)" ;;
+esac

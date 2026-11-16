@@ -1,0 +1,3 @@
+#!/bin/bash
+# Fake `defaults read -g AppleInterfaceStyle`.
+if [ -f "$FAKE_DIR/dark" ]; then echo Dark; else exit 1; fi

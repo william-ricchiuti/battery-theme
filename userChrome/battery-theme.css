@@ -1,0 +1,25 @@
+/* Battery Theme — optional tab outlines (battery-theme.css)
+ *
+ * The Firefox theme API can only set colours; it cannot outline inactive
+ * tabs. This file gives inactive tabs a faint fill and a 1px outline so they
+ * read as separate cards. It is installed next to userChrome.css and pulled
+ * in with one @import line, so an existing userChrome.css is left intact.
+ *
+ * Install: bash userChrome/install-userchrome.sh
+ *
+ * Selectors checked against Firefox 160's own tabs.css (.tabbrowser-tab,
+ * .tab-stack, .tab-background, the [selected] / [multiselected] attributes).
+ * Colours are mixed from the tab text colour, so this works on both the dark
+ * and the light variant of the theme and follows the battery tint.
+ */
+
+.tabbrowser-tab:not([selected], [multiselected]) > .tab-stack > .tab-background {
+  background-color: color-mix(in srgb, currentColor 7%, transparent) !important;
+  outline: 1px solid color-mix(in srgb, currentColor 16%, transparent) !important;
+  outline-offset: -1px !important;
+}
+
+.tabbrowser-tab:not([selected], [multiselected]):hover > .tab-stack > .tab-background {
+  background-color: color-mix(in srgb, currentColor 12%, transparent) !important;
+  outline-color: color-mix(in srgb, currentColor 26%, transparent) !important;
+}
