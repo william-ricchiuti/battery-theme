@@ -1,0 +1,35 @@
+/* Battery Theme — userChrome.css
+ *
+ * The Firefox theme API cannot style inactive tabs: separators were removed
+ * in Firefox 89 and theme_experiment needs Dev Edition/Nightly. This file
+ * adds the borders and separation that make inactive tabs read as distinct
+ * cards. It layers on top of the extension's dynamic battery colors (the
+ * active tab stays the battery color; inactive tabs are darkened + outlined).
+ *
+ * One-time setup (manual, ~2 min):
+ *   1. about:config  ->  toolkit.legacyUserProfileCustomizations.stylesheets = true
+ *   2. about:support -> "Profile Folder" -> Open Folder
+ *   3. Create a "chrome" folder there and put this file in it as userChrome.css
+ *   4. Restart Firefox
+ */
+
+/* Inactive tabs: slightly darker than the strip + a 1px ring + rounded card,
+   with a small gap between tabs so the rings don't touch. */
+.tabbrowser-tab:not([selected]) .tab-background {
+  background-color: rgba(0, 0, 0, 0.26) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13) !important;
+  margin-inline: 2px !important;
+}
+
+/* Selected tab: keep the theme's battery color, just round it to match and
+   drop any leftover shadow (Nova already removed it). */
+.tabbrowser-tab[selected] .tab-background {
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+/* Keep the strip edges tidy. */
+#tabbrowser-tabs {
+  padding-inline: 4px !important;
+}

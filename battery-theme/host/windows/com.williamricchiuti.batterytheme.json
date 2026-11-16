@@ -1,0 +1,7 @@
+{
+    "name": "com.williamricchiuti.batterytheme",
+    "description": "Native messaging host for Battery Theme extension",
+    "path": "__SCRIPT_DIR__\\battery-host.bat",
+    "type": "stdio",
+    "allowed_extensions": ["battery-theme@willy.dev"]
+}
