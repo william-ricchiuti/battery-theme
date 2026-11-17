@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Battery Theme",
-    "version": "1.5.0",
+    "version": "1.5.1",
     "description": "Tints Firefox to reflect your laptop battery: calm when healthy, amber then red as it drains, blue while charging. Needs a small helper script.",
     "permissions": [
         "theme",
@@ -18,7 +18,8 @@
     "action": {
         "default_title": "Battery Theme",
         "default_popup": "popup.html",
-        "default_icon": "icons/icon.svg"
+        "default_icon": "icons/icon.svg",
+        "default_area": "navbar"
     },
     "browser_specific_settings": {
         "gecko": {

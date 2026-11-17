@@ -52,16 +52,21 @@ MIT
 
 Not required: the manifest declares `data_collection_permissions: none`. If the form asks, use: "Battery Theme does not collect, store or transmit any data."
 
-## Screenshots to take (real Firefox, 1280x800 or larger)
+## Screenshots
 
-1. Healthy battery, dark mode: the near-neutral look.
-2. Around 20%: amber/orange strip and active tab.
-3. Under 10%: the red state.
-4. Charging: blue.
-5. The popup open, showing percentage and settings.
-6. Light mode at a low level.
+Five are ready in `docs/screenshots/` (2560x1600, real Firefox windows driven by a simulated battery):
 
-`preview.html` shows what each state should look like, but the listing needs screenshots of the real browser.
+| File | Caption |
+| --- | --- |
+| `1-healthy-dark.png` | Healthy battery: Firefox stays calm, with just a hint of green. |
+| `2-low-dark.png` | At 20% the tab strip and active tab turn amber. |
+| `3-critical-dark.png` | Under 10% the browser is unmistakably red. |
+| `4-charging-dark.png` | Blue while charging. |
+| `6-low-light.png` | Works in light mode too. |
+
+They were taken in Firefox Developer Edition with the window not focused, so the tint is slightly more muted than in a focused window.
+
+Still to take by hand: the popup open (click the battery button, then capture the window).
 
 ## Notes to reviewer
 

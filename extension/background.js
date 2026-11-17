@@ -104,11 +104,57 @@ function isValidState(msg) {
   );
 }
 
-function setTheme(themeKey, apply) {
+// Firefox can replace our theme behind our back: its own default theme is
+// (re)applied during browser startup, sometimes just after our first paint,
+// and the user or another add-on can switch themes at any time. Because an
+// unchanged battery level is never repainted, a lost paint would otherwise
+// stick until the level moved. So: every theme change that is not ours gets
+// painted over again (rate-limited), and the first paint after a browser
+// start is repeated once a few seconds later.
+let ownUpdates = 0;          // our theme calls not yet echoed by theme.onUpdated
+let ownUpdatesTimer = null;
+let repaintTimes = [];       // recent forced repaints, for rate limiting
+let bootRepaintPending = false;
+const MAX_REPAINTS_PER_MINUTE = 3;
+const BOOT_REPAINT_MS = 4000;
+
+function paintTheme(view) {
+  ownUpdates += 1;
+  clearTimeout(ownUpdatesTimer);
+  ownUpdatesTimer = setTimeout(() => (ownUpdates = 0), 2000); // some calls produce no event
+  if (view.kind === "battery") browser.theme.update(Colors.buildTheme(view.state, settings).theme);
+  else browser.theme.reset();
+}
+
+function setTheme(themeKey, view) {
   if (painted.themeKey === themeKey) return;
   painted.themeKey = themeKey;
-  apply();
+  paintTheme(view);
+  if (bootRepaintPending && view.kind === "battery") {
+    bootRepaintPending = false;
+    setTimeout(() => {
+      if (lastView && lastView.kind === "battery") paintTheme(lastView);
+    }, BOOT_REPAINT_MS);
+  }
 }
+
+browser.theme.onUpdated.addListener(() => {
+  if (ownUpdates > 0) {
+    ownUpdates -= 1;
+    return;
+  }
+  ready.then(() => {
+    // Someone else changed the theme. Only reclaim it while we have a reading.
+    if (!lastView || lastView.kind !== "battery") return;
+    const now = Date.now();
+    repaintTimes = repaintTimes.filter((t) => now - t < 60000);
+    if (repaintTimes.length >= MAX_REPAINTS_PER_MINUTE) return; // don't fight another theme add-on
+    repaintTimes.push(now);
+    setTimeout(() => {
+      if (lastView && lastView.kind === "battery") paintTheme(lastView);
+    }, 250);
+  });
+});
 
 // Also publishes the current view for the popup, which reads it from
 // storage.session and follows changes via storage.onChanged.
@@ -127,14 +173,12 @@ function render(view) {
 
   if (view.kind === "battery") {
     const { state } = view;
-    setTheme(Colors.themeKey(state, settings), () =>
-      browser.theme.update(Colors.buildTheme(state, settings).theme)
-    );
+    setTheme(Colors.themeKey(state, settings), view);
     showBattery(state);
   } else {
     // No trustworthy reading: hand the chrome back to the user's own theme
     // rather than painting a made-up battery level.
-    setTheme("reset", () => browser.theme.reset());
+    setTheme("reset", view);
     if (view.kind === "no-battery") showPlaceholder("-", NO_BATTERY_TITLE);
     else showPlaceholder("?", NO_HOST_TITLE);
   }
@@ -154,11 +198,13 @@ let port = null;
 let failures = 0;
 
 const ready = Promise.all([
-  browser.storage.session.get(["painted", "failures"]),
+  browser.storage.session.get(["painted", "failures", "view"]),
   browser.storage.local.get("settings"),
 ])
   .then(([session, local]) => {
     if (session.painted) painted = session.painted;
+    else bootRepaintPending = true; // nothing painted yet this browser session
+    if (session.view) lastView = session.view;
     if (Number.isInteger(session.failures)) failures = session.failures;
     settings = Colors.normalizeSettings(local.settings);
   })
