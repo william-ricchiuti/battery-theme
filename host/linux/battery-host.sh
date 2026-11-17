@@ -174,12 +174,24 @@ send_state
 
 # Poll loop in the background; the main process stays in the foreground
 # reading stdin, which is the arrangement Firefox reliably keeps open.
+#
+# If Firefox crashes or is force-quit, stdin is not always closed (another
+# process can still hold the pipe), so the loop also checks that the process
+# that started us is still there and shuts everything down if it is not.
+main_pid=$$
+browser_pid=$PPID
 (
     trap 'exit 0' TERM INT HUP PIPE
     tick=0
     while :; do
         sleep "$POLL" &
         wait $!
+        if ! kill -0 "$browser_pid" 2>/dev/null; then
+            # Ends the main process's `cat` (and this loop), which lets the
+            # main process run its normal cleanup and exit.
+            pkill -P "$main_pid" 2>/dev/null
+            exit 0
+        fi
         tick=$((tick + 1))
         if [ $((tick % SLOW_EVERY)) -eq 0 ]; then
             refresh_slow

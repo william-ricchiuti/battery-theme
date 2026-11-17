@@ -100,6 +100,12 @@ mkfifo "$fifo"
 
 # Event loop, in the background. The main process stays in the foreground
 # reading stdin (below): that is the arrangement Firefox reliably keeps open.
+#
+# If Firefox crashes or is force-quit, stdin is not always closed (another
+# process can still hold the pipe), so the loop also checks that the process
+# that started us is still there and shuts everything down if it is not.
+main_pid=$$
+browser_pid=$PPID
 (
     pmset -g pslog >"$fifo" 2>/dev/null &
     pmset_pid=$!
@@ -107,6 +113,14 @@ mkfifo "$fifo"
     exec 4<"$fifo"
 
     while :; do
+        if ! kill -0 "$browser_pid" 2>/dev/null; then
+            kill "$pmset_pid" 2>/dev/null
+            rm -rf "$tmp_dir"
+            # Ends the main process's `cat` (and this loop), which lets the
+            # main process run its normal cleanup and exit.
+            pkill -P "$main_pid" 2>/dev/null
+            exit 0
+        fi
         if read -r -t "$HEARTBEAT" -u 4 line; then
             case "$line" in
                 *InternalBattery*|*"Now drawing"*) send_state ;;
