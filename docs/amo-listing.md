@@ -4,7 +4,9 @@ Everything to paste into the submission form at <https://addons.mozilla.org/deve
 
 ## Name
 
-Battery Theme
+Battery Theme: Battery Level Indicator
+
+(Store listing name. The add-on itself, the repository and the IDs stay "Battery Theme".)
 
 ## Summary (250 characters max)
 
@@ -62,7 +64,7 @@ Six are ready in `docs/screenshots/` (2560x1600, real Firefox windows driven by 
 | File | Caption |
 | --- | --- |
 | `1-healthy-dark.png` | The tab strip fills to your charge level: 82% here. |
-| `2-low-dark.png` | At 20% the gauge is short and amber. |
+| `2-low-dark.png` | At 20% the gauge is short and orange. |
 | `3-critical-dark.png` | Under 10% the browser is unmistakably red. |
 | `4-charging-dark.png` | Blue while charging. |
 | `5-popup-dark.png` | The toolbar button shows the exact level, time left and settings. |
@@ -70,7 +72,7 @@ Six are ready in `docs/screenshots/` (2560x1600, real Firefox windows driven by 
 
 Notes on how they were taken:
 
-- 1-4 and 6 come from Firefox Developer Edition with the window not focused, so the tint is slightly more muted than in a focused window.
+- 1-4 and 6 come from Firefox Developer Edition with the window focused.
 - 5 comes from regular Firefox launched by `web-ext`, which is why its address bar has the striped "remote control" look and a robot icon. Retake it by hand (click the battery button, capture the window) if you want a clean address bar.
 
 ## Notes to reviewer
