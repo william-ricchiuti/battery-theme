@@ -40,7 +40,9 @@ Click the battery button in the toolbar to see the percentage, time remaining an
 | Colours | **Green to red**, or **Colour-blind safe** (neutral to orange). Charging is blue in both. |
 | Appearance | Follow the system's light/dark mode, or force one. |
 | Tint strength | How strongly the battery colour tints the browser. |
-| Fill the tab strip to the battery level | The gauge. Turn off for an even tint across the whole strip, which is also much quieter when the battery is healthy. |
+| Style | **Vivid** shows the battery colour at every level: a coloured gauge, a solid battery-coloured active tab and a coloured line under the toolbar. **Quiet until low** stays close to neutral while the battery is healthy. |
+| Fill the tab strip to the battery level | The gauge, drawn as ten battery cells with a bright leading edge. Turn off for an even tint across the whole strip. |
+| Flash when the battery drops to 20% and 10% | A one-second brighter flash of the tab strip and toolbar. Also off when the system's "reduce motion" setting is on. |
 | Show percentage on the toolbar button | Adds the number as a badge on the button. |
 
 | Tint Firefox with the battery colour | Turn off to pause the tint. The button and popup keep showing the battery. |

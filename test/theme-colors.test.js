@@ -71,8 +71,8 @@ test("quiet when healthy, loud when low (both palettes, both modes)", () => {
     for (const dark of [true, false]) {
       // The "quiet" rules describe the plain tint; the gauge deliberately
       // keeps the filled part visible and is covered by its own tests.
-      const neutral = C.buildTheme(state(100, "ac", dark), { palette, intensity: 0, gauge: false }).raw;
-      const tint = (p, key) => distance(C.buildTheme(state(p, "battery", dark), { palette, gauge: false }).raw[key], neutral[key]);
+      const neutral = C.buildTheme(state(100, "ac", dark), { palette, intensity: 0, gauge: false, style: "subtle" }).raw;
+      const tint = (p, key) => distance(C.buildTheme(state(p, "battery", dark), { palette, gauge: false, style: "subtle" }).raw[key], neutral[key]);
       const label = `${palette}/${dark ? "dark" : "light"}`;
       // Healthy: strip barely tinted, toolbar untouched.
       assert.ok(tint(80, "frame") < 0.06, `${label}: strip should be near-neutral at 80%`);
@@ -85,7 +85,7 @@ test("quiet when healthy, loud when low (both palettes, both modes)", () => {
       // gets more colourful as the battery drains.
       let prev = -1;
       for (let p = 50; p >= 0; p--) {
-        const chroma = lch(C.buildTheme(state(p, "battery", dark), { palette, gauge: false }).raw.frame).C;
+        const chroma = lch(C.buildTheme(state(p, "battery", dark), { palette, gauge: false, style: "subtle" }).raw.frame).C;
         assert.ok(chroma >= prev - 0.004, `${label}: strip got less colourful at ${p}%`);
         prev = chroma;
       }
@@ -152,7 +152,11 @@ test("status wording", () => {
 test("settings are normalized", () => {
   assert.deepStrictEqual(C.normalizeSettings({ palette: "nope", intensity: 99, appearance: 3, badge: "yes" }), {
     palette: "classic", intensity: 2, appearance: "auto", badge: false, enabled: true, gauge: true,
+    style: "vivid", motion: true,
   });
+  assert.strictEqual(C.normalizeSettings({ style: "subtle", motion: false }).style, "subtle");
+  assert.strictEqual(C.normalizeSettings({ style: "loud" }).style, "vivid");
+  assert.strictEqual(C.normalizeSettings({ motion: false }).motion, false);
   assert.strictEqual(C.normalizeSettings({ badge: true }).badge, true);
 });
 
@@ -230,13 +234,54 @@ test("gauge: theme points at an image that exists and matches the generator; off
     }
   }
   assert.strictEqual(fs.readdirSync(path.join(ext, "gauge")).length, 2 * C.gaugeLevels().length, "no stray files");
+  // Cells: gaps below the level, ghost lines above it.
+  assert.strictEqual((C.gaugeSvg(true, 62).match(/width="2" height="100%" fill="rgb/g) || []).length, 6);
+  assert.strictEqual((C.gaugeSvg(true, 62).match(/width="1" height="100%"/g) || []).length, 3);
 
   const on = C.buildTheme(state(61), null);
-  assert.deepStrictEqual(on.theme.images.additional_backgrounds, ["gauge/dark-62.svg"]);
-  assert.deepStrictEqual(C.buildTheme(state(61, "battery", false), null).theme.images.additional_backgrounds, ["gauge/light-62.svg"]);
+  assert.deepStrictEqual(on.theme.images.additional_backgrounds, ["gauge/r2-dark-62.svg"]);
+  assert.deepStrictEqual(C.buildTheme(state(61, "battery", false), null).theme.images.additional_backgrounds, ["gauge/r2-light-62.svg"]);
   assert.strictEqual(C.buildTheme(state(0), null).gauge.level, 0);
   assert.strictEqual(C.buildTheme(state(100), null).gauge.level, 100);
   const off = C.buildTheme(state(61), { gauge: false });
   assert.strictEqual(off.theme.images, undefined);
   assert.strictEqual(off.gauge, null);
+});
+
+test("vivid style: colour shows at every level, and still escalates when low", () => {
+  for (const palette of ["classic"]) {
+    for (const dark of [true, false]) {
+      const label = `${palette}/${dark ? "dark" : "light"}`;
+      const neutral = C.buildTheme(state(100, "ac", dark), { palette, intensity: 0, gauge: false, style: "subtle" }).raw;
+      const tint = (p, kind, key, style) =>
+        distance(C.buildTheme(state(p, kind, dark), { palette, style }).raw[key], neutral[key]);
+      for (const [p, kind] of [[100, "battery"], [80, "battery"], [100, "ac"], [50, "charging"]]) {
+        assert.ok(tint(p, kind, "frame", "vivid") > 0.06, `${label}: strip clearly coloured at ${p}% ${kind}`);
+        assert.ok(tint(p, kind, "tab_selected", "vivid") > 0.15, `${label}: active tab is a solid card at ${p}% ${kind}`);
+        assert.ok(tint(p, kind, "toolbar_bottom_separator", "vivid") > 0.08, `${label}: accent line at ${p}% ${kind}`);
+        assert.ok(tint(p, kind, "frame", "vivid") > tint(p, kind, "frame", "subtle"), `${label}: vivid beats subtle at ${p}% ${kind}`);
+      }
+      assert.ok(tint(10, "battery", "frame", "vivid") > tint(80, "battery", "frame", "vivid"), `${label}: louder when low`);
+      assert.ok(tint(10, "battery", "ntp_background", "vivid") > tint(80, "battery", "ntp_background", "vivid"));
+    }
+  }
+});
+
+test("pulse: fires once per threshold on the way down, and its frame is brighter but still readable", () => {
+  assert.strictEqual(C.crossesPulse(21, 20), true);
+  assert.strictEqual(C.crossesPulse(22, 19), true);
+  assert.strictEqual(C.crossesPulse(20, 19), false);
+  assert.strictEqual(C.crossesPulse(11, 10), true);
+  assert.strictEqual(C.crossesPulse(19, 21), false, "not while the level rises");
+  assert.strictEqual(C.crossesPulse(60, 59), false);
+  for (const dark of [true, false]) {
+    for (const p of [20, 10]) {
+      const normal = C.buildTheme(state(p, "battery", dark), null).raw;
+      const flash = C.buildTheme(state(p, "battery", dark), null, { pulse: true }).raw;
+      assert.ok(distance(flash.frame, normal.frame) > 0.04, "pulse frame differs visibly");
+      for (const [fg, bg] of TEXT_PAIRS) {
+        assert.ok(C.contrast(flash[fg], flash[bg]) >= 3, `pulse ${fg} on ${bg}: ${C.contrast(flash[fg], flash[bg]).toFixed(2)}`);
+      }
+    }
+  }
 });

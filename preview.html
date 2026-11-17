@@ -18,7 +18,7 @@
   .strip { display: flex; gap: 2px; padding: 5px 6px 0; align-items: flex-end; }
   .tab { padding: 6px 12px; border-radius: 6px 6px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
   .tab.sel { border-top: 2px solid; padding-top: 4px; }
-  .bar { display: flex; gap: 8px; padding: 6px 8px; align-items: center; border-top: 1px solid; border-bottom: 1px solid; }
+  .bar { display: flex; gap: 8px; padding: 6px 8px; align-items: center; border-top: 1px solid; border-bottom: 2px solid; }
   .field { flex: 1; padding: 4px 10px; border-radius: 6px; border: 1px solid; }
   .ntp { padding: 8px; display: flex; gap: 8px; }
   .card { padding: 6px 10px; border-radius: 6px; }
@@ -32,6 +32,9 @@
 <div class="controls">
   <label>Palette
     <select id="palette"><option value="classic">classic</option><option value="cvd">colour-blind safe</option></select>
+  </label>
+  <label>Style
+    <select id="style"><option value="vivid">vivid</option><option value="subtle">quiet until low</option></select>
   </label>
   <label><input id="gauge" type="checkbox" checked> Gauge</label>
   <label>Intensity <input id="intensity" type="range" min="0.5" max="1.5" step="0.25" value="1"> <span id="intensityValue">1</span></label>
@@ -53,7 +56,7 @@
     const c = built.theme.colors;
     // Same picture the gauge cover image produces in Firefox.
     const strip = built.gauge
-      ? `linear-gradient(to right, transparent calc(${built.gauge.level}% - 14px), ${C.css(built.gauge.empty)} ${built.gauge.level}%), ${c.frame}`
+      ? `url("extension/${built.theme.images.additional_backgrounds[0]}") left top / 100% 100% no-repeat, ${c.frame}`
       : c.frame;
     const wrap = document.createElement("div");
     const cap = document.createElement("div");
@@ -86,6 +89,7 @@
       palette: document.getElementById("palette").value,
       intensity: Number(document.getElementById("intensity").value),
       gauge: document.getElementById("gauge").checked,
+      style: document.getElementById("style").value,
     };
     document.getElementById("intensityValue").textContent = settings.intensity;
     const grid = document.getElementById("grid");
@@ -102,6 +106,8 @@
   if (C.PALETTES[params.get("palette")]) document.getElementById("palette").value = params.get("palette");
   if (params.get("intensity")) document.getElementById("intensity").value = params.get("intensity");
   document.getElementById("gauge").addEventListener("change", draw);
+  document.getElementById("style").addEventListener("change", draw);
+  if (params.get("style") === "subtle") document.getElementById("style").value = "subtle";
   document.getElementById("palette").addEventListener("change", draw);
   document.getElementById("intensity").addEventListener("input", draw);
   draw();

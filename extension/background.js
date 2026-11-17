@@ -19,7 +19,7 @@ const HOST_NAME = "com.williamricchiuti.batterytheme";
 // Colour model lives in theme-colors.js (loaded first; see manifest).
 const Colors = globalThis.BatteryColors;
 
-// User settings (palette / intensity / appearance / badge / enabled / gauge). Stored in storage.local
+// User settings (palette / intensity / appearance / badge / enabled / gauge / style / motion). Stored in storage.local
 // under "settings"; a settings UI only has to write that key.
 let settings = Colors.normalizeSettings(null);
 
@@ -122,12 +122,29 @@ let bootRepaintPending = false;
 const MAX_REPAINTS_PER_MINUTE = 3;
 const BOOT_REPAINT_MS = 4000;
 
-function paintTheme(view) {
+// The OS "reduce motion" setting switches off the flash even when the
+// extension's own motion setting is on.
+const reducedMotion = globalThis.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+function paintSettings() {
+  return reducedMotion && reducedMotion.matches ? { ...settings, motion: false } : settings;
+}
+
+function paintTheme(view, opts) {
   ownUpdates += 1;
   clearTimeout(ownUpdatesTimer);
   ownUpdatesTimer = setTimeout(() => (ownUpdates = 0), 2000); // some calls produce no event
-  if (view.kind === "battery") browser.theme.update(Colors.buildTheme(view.state, settings).theme);
+  if (view.kind === "battery") browser.theme.update(Colors.buildTheme(view.state, paintSettings(), opts).theme);
   else browser.theme.reset();
+}
+
+// A short brighter frame when the battery drops through 20% and 10%, so the
+// change is noticed even if you were not looking at the tab strip.
+const PULSE_MS = 900;
+function pulseTheme(view) {
+  paintTheme(view, { pulse: true });
+  setTimeout(() => {
+    if (lastView && lastView.kind === "battery" && settings.enabled) paintTheme(lastView);
+  }, PULSE_MS);
 }
 
 function setTheme(themeKey, view) {
@@ -172,6 +189,7 @@ function savePainted() {
 let lastView = null; // re-rendered when settings change
 
 function render(view) {
+  const previous = lastView;
   lastView = view;
   const viewKey = JSON.stringify({ view, settings });
   if (painted.viewKey === viewKey) return; // nothing changed — no work at all
@@ -181,8 +199,14 @@ function render(view) {
     const { state } = view;
     // Paused: the button and popup keep showing the reading, but the browser
     // theme is handed back to the user.
-    if (settings.enabled) setTheme(Colors.themeKey(state, settings), view);
-    else setTheme("reset", { kind: "paused" });
+    if (settings.enabled) {
+      const ps = paintSettings();
+      setTheme(Colors.themeKey(state, ps), view);
+      const drained =
+        previous && previous.kind === "battery" && !state.on_ac && !previous.state.on_ac &&
+        Colors.crossesPulse(previous.state.percentage, state.percentage);
+      if (drained && ps.motion) pulseTheme(view);
+    } else setTheme("reset", { kind: "paused" });
     showBattery(state);
   } else {
     // No trustworthy reading: hand the chrome back to the user's own theme
@@ -363,6 +387,13 @@ browser.runtime.onInstalled.addListener((details) => {
   justInstalled = true;
   ready.then(maybeOpenSetup); // in case the first connection attempt already finished
 });
+
+if (reducedMotion) {
+  reducedMotion.addEventListener("change", () => {
+    painted.viewKey = null; // the OS setting is not part of the view key
+    if (lastView) render(lastView);
+  });
+}
 
 ready.then(async () => {
   if (!(await browser.alarms.get(WATCHDOG_ALARM))) setWatchdog(WATCHDOG_MINUTES);

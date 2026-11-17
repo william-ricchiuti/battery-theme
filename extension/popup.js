@@ -61,6 +61,8 @@ function draw() {
   form.elements.badge.checked = settings.badge;
   form.elements.enabled.checked = settings.enabled;
   form.elements.gauge.checked = settings.gauge;
+  form.elements.style.value = settings.style;
+  form.elements.motion.checked = settings.motion;
 
   if (view && view.kind === "battery") {
     const { state } = view;
@@ -108,6 +110,8 @@ function saveSettings() {
     badge: form.elements.badge.checked,
     enabled: form.elements.enabled.checked,
     gauge: form.elements.gauge.checked,
+    style: form.elements.style.value,
+    motion: form.elements.motion.checked,
   });
   browser.storage.local.set({ settings });
   draw();

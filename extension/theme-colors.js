@@ -4,8 +4,10 @@
 // Node tests / preview page, so everything here must stay side-effect free.
 //
 // Design rules:
-//   1. Quiet when healthy. Above ~50% the chrome is close to neutral and the
-//      battery colour only shows on thin elements.
+//   1. Two styles. "vivid" (default) shows the battery colour at every
+//      level: a coloured gauge in the tab strip and a solid battery-coloured
+//      active tab. "subtle" stays close to neutral above ~50% and only shows
+//      the colour on thin elements until the battery gets low.
 //   2. Escalate with urgency. As the battery drops, BOTH the hue and the
 //      amount of tinted surface grow, so 15% is unmistakable even if you
 //      cannot tell red from green.
@@ -31,6 +33,8 @@
     badge: false,        // show the percentage as a badge on the toolbar button
     enabled: true,       // false = leave the browser theme alone (button and popup keep working)
     gauge: true,         // fill the tab strip only up to the battery level
+    style: "vivid",      // "vivid" (colour at every level) | "subtle" (near-neutral while healthy)
+    motion: true,        // flash the chrome once when the battery drops through 20% / 10%
   };
 
   // Accent stops per palette: [percentage, L, C, h] in OKLCH, tuned for dark
@@ -217,6 +221,8 @@
     out.badge = out.badge === true;
     out.enabled = out.enabled !== false;
     out.gauge = out.gauge !== false;
+    if (!["vivid", "subtle"].includes(out.style)) out.style = DEFAULT_SETTINGS.style;
+    out.motion = out.motion !== false;
     return out;
   }
 
@@ -302,7 +308,13 @@
   // from gaugeSvg below). The SVGs have no intrinsic size and use percentages,
   // so they follow the window width on their own.
   const GAUGE_MIN_TINT = 0.2; // the filled part must be visible even when healthy
-  const GAUGE_FADE_PX = 14;   // soft edge instead of a hard line through a tab
+  const GAUGE_GLOW_PX = 26;   // brightening toward the leading edge
+  const GAUGE_EDGE_PX = 2;    // the leading edge itself
+  const GAUGE_CELLS = 10;     // the fill is cut into battery cells
+  // Part of every file name. Firefox keeps theme images cached across an
+  // extension update, so bump this whenever gaugeSvg changes what it draws.
+  const GAUGE_REV = "r2";
+  const PULSE_AT = [20, 10];  // flash once when the battery drops through these
 
   const quantize = (percentage) =>
     Math.max(0, Math.min(100, Math.round(percentage / THEME_STEP) * THEME_STEP));
@@ -314,20 +326,42 @@
   }
 
   function gaugeFile(dark, level) {
-    return `gauge/${dark ? "dark" : "light"}-${level}.svg`;
+    return `gauge/${GAUGE_REV}-${dark ? "dark" : "light"}-${level}.svg`;
   }
 
+  // Layers, back to front: glow + leading edge, the cover over the empty
+  // part, then the cell dividers (gaps in the filled part, faint ghost lines
+  // in the empty part so the scale stays readable).
+  // The images are static on purpose: Firefox 160 does not run SVG
+  // animations in theme images (tried a charging sweep; it froze).
   function gaugeSvg(dark, level) {
-    const empty = css(BASES[dark ? "dark" : "light"].frame);
-    return (
-      `<svg xmlns="http://www.w3.org/2000/svg">` +
-      `<defs><linearGradient id="f"><stop offset="0" stop-color="${empty}" stop-opacity="0"/>` +
-      `<stop offset="1" stop-color="${empty}"/></linearGradient></defs>` +
-      `<svg x="${level}%" overflow="visible">` +
-      `<rect x="-${GAUGE_FADE_PX}" width="${GAUGE_FADE_PX}" height="100%" fill="url(#f)"/>` +
-      `<rect width="100%" height="100%" fill="${empty}"/>` +
-      `</svg></svg>\n`
-    );
+    const B = BASES[dark ? "dark" : "light"];
+    const empty = css(B.frame);
+    const ink = dark ? "#fff" : "#000";
+    const glow = dark ? 0.2 : 0.12;
+    const edge = dark ? 0.6 : 0.4;
+    let out =
+      `<svg xmlns="http://www.w3.org/2000/svg"><defs>` +
+      `<linearGradient id="g"><stop offset="0" stop-color="${ink}" stop-opacity="0"/>` +
+      `<stop offset="1" stop-color="${ink}" stop-opacity="${glow}"/></linearGradient></defs>`;
+    out += `<svg x="${level}%" overflow="visible">`;
+    if (level > 0) {
+      out +=
+        `<rect x="-${GAUGE_GLOW_PX}" width="${GAUGE_GLOW_PX}" height="100%" fill="url(#g)"/>` +
+        `<rect x="-${GAUGE_EDGE_PX}" width="${GAUGE_EDGE_PX}" height="100%" fill="${ink}" fill-opacity="${edge}"/>`;
+    }
+    out += `<rect width="100%" height="100%" fill="${empty}"/></svg>`;
+    for (let i = 1; i < GAUGE_CELLS; i++) {
+      const at = (100 / GAUGE_CELLS) * i;
+      if (at < level) out += `<rect x="${at}%" width="2" height="100%" fill="${empty}"/>`;
+      else if (at > level) out += `<rect x="${at}%" width="1" height="100%" fill="${css(B.line)}"/>`;
+    }
+    return out + `</svg>\n`;
+  }
+
+  // True when a drain from `before` to `after` percent passes a flash point.
+  function crossesPulse(before, after) {
+    return PULSE_AT.some((t) => before > t && after <= t);
   }
 
   // Two states with the same key paint the same theme.
@@ -336,12 +370,18 @@
     const kind = powerKind(state);
     // While plugged in the level does not affect the colours, only the gauge.
     const level = kind === "battery" || settings.gauge ? quantize(state.percentage) : "-";
-    return [settings.palette, settings.intensity, isDark(state, settings) ? "d" : "l", kind, level, settings.gauge ? "g" : "n"].join(":");
+    return [
+      settings.palette, settings.intensity, isDark(state, settings) ? "d" : "l", kind, level,
+      settings.gauge ? "g" : "n", settings.style,
+    ].join(":");
   }
 
   // Returns { colors, raw } where `colors` is ready for browser.theme.update
   // and `raw` holds the same values as [r, g, b] (for tests and the icon).
-  function buildTheme(state, rawSettings) {
+  // `opts.pulse` builds the brighter frame shown for a moment when the
+  // battery drops through a flash point.
+  function buildTheme(state, rawSettings, opts) {
+    const pulse = !!(opts && opts.pulse);
     const settings = normalizeSettings(rawSettings);
     const dark = isDark(state, settings);
     const B = BASES[dark ? "dark" : "light"];
@@ -350,15 +390,37 @@
     const k = settings.intensity;
     const accent = accentRgb(state, settings);
 
-    // How much accent each surface takes. Healthy = a whisper on the strip
-    // only; critical = strip, toolbar, active tab and new-tab page all tinted.
+    // How much accent each surface takes.
+    //   subtle: healthy = a whisper on the strip only; critical = strip,
+    //           toolbar, active tab and new-tab page all tinted.
+    //   vivid:  the strip and active tab carry the colour at every level,
+    //           and urgency adds to it.
     const charging = kind === "charging";
+    const vivid = settings.style === "vivid";
     // Capped so the strip never becomes a mid-tone that no text can sit on.
-    let tFrame = Math.min(0.5, (charging ? 0.12 : 0.07 + 0.33 * u) * k);
+    let tFrame, tToolbar, tTab, tNtp, tSidebar;
+    if (vivid) {
+      tFrame = Math.min(0.5, (charging ? 0.34 : 0.3 + 0.16 * u) * k);
+      tToolbar = clamp01((0.05 + 0.16 * Math.pow(u, 1.5)) * k);
+      tTab = clamp01(0.55 + 0.25 * k + 0.3 * u);
+      tNtp = clamp01((0.05 + 0.1 * u) * k);
+      tSidebar = clamp01((0.1 + 0.1 * u) * k);
+    } else {
+      tFrame = Math.min(0.5, (charging ? 0.12 : 0.07 + 0.33 * u) * k);
+      tToolbar = clamp01(0.16 * Math.pow(u, 1.5) * k);
+      tTab = clamp01((charging ? 0.24 : 0.14) * k + 0.86 * Math.pow(u, 1.2));
+      tNtp = clamp01(0.1 * u * k);
+      tSidebar = tToolbar * 0.5;
+    }
     if (settings.gauge) tFrame = Math.max(tFrame, Math.min(0.5, GAUGE_MIN_TINT * k));
-    const tToolbar = clamp01(0.16 * Math.pow(u, 1.5) * k);
-    const tTab = clamp01((charging ? 0.24 : 0.14) * k + 0.86 * Math.pow(u, 1.2));
+    if (pulse) {
+      tFrame = Math.min(0.75, tFrame + 0.25);
+      tToolbar = clamp01(tToolbar + 0.2);
+    }
     const tBorder = clamp01(0.3 + 0.7 * u + (charging ? 0.25 : 0));
+    // The line under the toolbar carries the colour too (it is all that
+    // shows the state when tabs are vertical).
+    const tLine = vivid ? 0.7 : 0;
 
     const frame = mix(B.frame, accent, tFrame);
     const frameInactive = mix(frame, B.dim, 0.35);
@@ -370,8 +432,9 @@
     const popup = B.toolbar;
     const highlight = readableSurface(mix(B.toolbar, accent, 0.3), B.text);
     const popupHighlight = highlight.bg;
-    const sidebar = mix(B.frame, accent, tToolbar * 0.5);
-    const ntp = mix(B.deep, accent, clamp01(0.1 * u * k));
+    const sidebar = mix(B.frame, accent, tSidebar);
+    const ntp = mix(B.deep, accent, tNtp);
+    const ntpCard = mix(dark ? B.frame : B.field, accent, tNtp * 0.6);
 
     // Inactive-tab text has to be readable on both the focused and the
     // unfocused strip: take the first candidate that clears both, else the
@@ -403,7 +466,7 @@
       toolbar_field_text_focus: B.text,
       toolbar_field_border_focus: accent,
       toolbar_top_separator: B.line,
-      toolbar_bottom_separator: B.line,
+      toolbar_bottom_separator: mix(B.line, accent, tLine),
       toolbar_vertical_separator: B.line,
       popup,
       popup_border: B.line,
@@ -412,8 +475,9 @@
       popup_highlight_text: highlight.text,
       sidebar,
       sidebar_text: textOn(sidebar, B.text),
+      sidebar_border: mix(B.line, accent, tLine * 0.6),
       ntp_background: ntp,
-      ntp_card_background: dark ? B.frame : B.field,
+      ntp_card_background: ntpCard,
       ntp_text: textOn(ntp, B.text),
     };
 
@@ -447,6 +511,7 @@
     gaugeLevels,
     gaugeFile,
     gaugeSvg,
+    crossesPulse,
     themeKey,
     buildTheme,
     contrast,
