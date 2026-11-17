@@ -54,7 +54,7 @@ Not required: the manifest declares `data_collection_permissions: none`. If the 
 
 ## Screenshots
 
-Five are ready in `docs/screenshots/` (2560x1600, real Firefox windows driven by a simulated battery):
+Six are ready in `docs/screenshots/` (2560x1600, real Firefox windows driven by a simulated battery):
 
 | File | Caption |
 | --- | --- |
@@ -62,11 +62,13 @@ Five are ready in `docs/screenshots/` (2560x1600, real Firefox windows driven by
 | `2-low-dark.png` | At 20% the tab strip and active tab turn amber. |
 | `3-critical-dark.png` | Under 10% the browser is unmistakably red. |
 | `4-charging-dark.png` | Blue while charging. |
+| `5-popup-dark.png` | The toolbar button shows the exact level, time left and settings. |
 | `6-low-light.png` | Works in light mode too. |
 
-They were taken in Firefox Developer Edition with the window not focused, so the tint is slightly more muted than in a focused window.
+Notes on how they were taken:
 
-Still to take by hand: the popup open (click the battery button, then capture the window).
+- 1-4 and 6 come from Firefox Developer Edition with the window not focused, so the tint is slightly more muted than in a focused window.
+- 5 comes from regular Firefox launched by `web-ext`, which is why its address bar has the striped "remote control" look and a robot icon. Retake it by hand (click the battery button, capture the window) if you want a clean address bar.
 
 ## Notes to reviewer
 
