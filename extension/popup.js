@@ -12,19 +12,10 @@ const form = $("settings");
 let settings = Colors.normalizeSettings(null);
 let view = null; // { kind: "battery", state } | { kind: "no-battery" } | { kind: "no-host" } | null
 
-// Shown when the helper is missing.
-const INSTALL_HELP = {
-  win: {
-    body: "Firefox can't read the battery on its own, so Battery Theme uses a small helper script on this computer. Download the project (see the setup instructions), then run:",
-    command: "host\\windows\\install.bat",
-  },
-  default: {
-    body: "Firefox can't read the battery on its own, so Battery Theme uses a small helper script on this computer. Paste this into a terminal:",
-    command: "git clone https://github.com/william-ricchiuti/battery-theme && bash battery-theme/install.sh",
-  },
-};
+const Help = globalThis.BatteryHelp;
 let platform = "default";
-const SETUP_URL = browser.runtime.getManifest().homepage_url || null;
+let retryFailed = false; // the last "Try again" did not find the helper
+let retryTimer = null;
 
 // Paint the popup with the same surfaces as the browser chrome.
 function applyColors(state) {
@@ -58,8 +49,8 @@ function showNotice(title, body, { command = null, retry = false, link = false }
   $("noticeCommand").hidden = !command;
   $("noticeCommand").textContent = command || "";
   $("retry").hidden = !retry;
-  $("noticeLink").hidden = !(link && SETUP_URL);
-  if (SETUP_URL) $("noticeLink").href = SETUP_URL;
+  $("noticeLink").hidden = !link;
+  $("noticeLink").href = browser.runtime.getURL("setup.html");
 }
 
 function draw() {
@@ -68,6 +59,7 @@ function draw() {
   form.elements.appearance.value = settings.appearance;
   form.elements.intensity.value = String(Math.max(0.5, Math.min(1.5, settings.intensity)));
   form.elements.badge.checked = settings.badge;
+  form.elements.enabled.checked = settings.enabled;
 
   if (view && view.kind === "battery") {
     const { state } = view;
@@ -80,6 +72,7 @@ function draw() {
     $("time").textContent = time || "";
     $("fill").style.width = `${Math.max(2, state.percentage)}%`;
     $("lowPower").hidden = !state.low_power;
+    $("paused").hidden = settings.enabled;
     return;
   }
 
@@ -89,9 +82,18 @@ function draw() {
       "No battery found",
       "This computer doesn't report a battery, so Battery Theme leaves your Firefox theme alone."
     );
-  } else if (view && view.kind === "no-host") {
-    const help = INSTALL_HELP[platform] || INSTALL_HELP.default;
-    showNotice("One more step: install the helper", help.body, { command: help.command, retry: true, link: true });
+  } else if (view && (view.kind === "no-host" || view.kind === "old-helper")) {
+    const help = Help.forPlatform(platform);
+    const old = view.kind === "old-helper";
+    const title = old
+      ? "The helper needs updating"
+      : retryFailed
+        ? "Still not connected"
+        : "One more step: install the helper";
+    const body = old
+      ? `This version of Battery Theme needs a newer helper script. ${help.how}`
+      : `${Help.why} ${help.how}`;
+    showNotice(title, body, { command: help.command, retry: true, link: true });
   } else {
     showNotice("Connecting…", "Waiting for the first battery reading.");
   }
@@ -103,6 +105,7 @@ function saveSettings() {
     appearance: form.elements.appearance.value,
     intensity: Number(form.elements.intensity.value),
     badge: form.elements.badge.checked,
+    enabled: form.elements.enabled.checked,
   });
   browser.storage.local.set({ settings });
   draw();
@@ -113,10 +116,21 @@ $("intensity").addEventListener("input", saveSettings);
 $("retry").addEventListener("click", () => {
   showNotice("Connecting…", "Trying the battery helper again.");
   browser.runtime.sendMessage({ type: "retry" }).catch(() => {});
+  // If the helper is still missing, nothing changes for us to react to, so
+  // look again shortly and say so instead of waiting forever.
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(async () => {
+    view = (await browser.storage.session.get("view")).view || null;
+    retryFailed = !view || view.kind === "no-host";
+    draw();
+  }, 2500);
 });
 
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area === "session" && changes.view) view = changes.view.newValue || null;
+  if (area === "session" && changes.view) {
+    view = changes.view.newValue || null;
+    retryFailed = false;
+  }
   else if (area === "local" && changes.settings) settings = Colors.normalizeSettings(changes.settings.newValue);
   else return;
   draw();

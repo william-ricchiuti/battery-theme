@@ -19,7 +19,7 @@ const HOST_NAME = "com.williamricchiuti.batterytheme";
 // Colour model lives in theme-colors.js (loaded first; see manifest).
 const Colors = globalThis.BatteryColors;
 
-// User settings (palette / intensity / appearance). Stored in storage.local
+// User settings (palette / intensity / appearance / badge / enabled). Stored in storage.local
 // under "settings"; a settings UI only has to write that key.
 let settings = Colors.normalizeSettings(null);
 
@@ -92,6 +92,10 @@ let painted = { themeKey: null, viewKey: null };
 
 const NO_HOST_TITLE = "Battery Theme: helper not connected. Click for details.";
 const NO_BATTERY_TITLE = "Battery Theme: this machine has no battery, so the theme is idle.";
+const OLD_HELPER_TITLE = "Battery Theme: the helper needs updating. Click for details.";
+
+// Message format version this extension needs from the helper (its "v" field).
+const MIN_HELPER_VERSION = 1;
 
 function isValidState(msg) {
   if (!msg || typeof msg.has_battery !== "boolean") return false;
@@ -133,7 +137,7 @@ function setTheme(themeKey, view) {
   if (bootRepaintPending && view.kind === "battery") {
     bootRepaintPending = false;
     setTimeout(() => {
-      if (lastView && lastView.kind === "battery") paintTheme(lastView);
+      if (lastView && lastView.kind === "battery" && settings.enabled) paintTheme(lastView);
     }, BOOT_REPAINT_MS);
   }
 }
@@ -145,13 +149,14 @@ browser.theme.onUpdated.addListener(() => {
   }
   ready.then(() => {
     // Someone else changed the theme. Only reclaim it while we have a reading.
-    if (!lastView || lastView.kind !== "battery") return;
+    // Not while paused: then the theme is the user's to choose.
+    if (!lastView || lastView.kind !== "battery" || !settings.enabled) return;
     const now = Date.now();
     repaintTimes = repaintTimes.filter((t) => now - t < 60000);
     if (repaintTimes.length >= MAX_REPAINTS_PER_MINUTE) return; // don't fight another theme add-on
     repaintTimes.push(now);
     setTimeout(() => {
-      if (lastView && lastView.kind === "battery") paintTheme(lastView);
+      if (lastView && lastView.kind === "battery" && settings.enabled) paintTheme(lastView);
     }, 250);
   });
 });
@@ -163,6 +168,7 @@ function savePainted() {
 }
 
 // view: { kind: "battery", state } | { kind: "no-battery" } | { kind: "no-host" }
+//       | { kind: "old-helper" }
 let lastView = null; // re-rendered when settings change
 
 function render(view) {
@@ -173,16 +179,30 @@ function render(view) {
 
   if (view.kind === "battery") {
     const { state } = view;
-    setTheme(Colors.themeKey(state, settings), view);
+    // Paused: the button and popup keep showing the reading, but the browser
+    // theme is handed back to the user.
+    if (settings.enabled) setTheme(Colors.themeKey(state, settings), view);
+    else setTheme("reset", { kind: "paused" });
     showBattery(state);
   } else {
     // No trustworthy reading: hand the chrome back to the user's own theme
     // rather than painting a made-up battery level.
     setTheme("reset", view);
     if (view.kind === "no-battery") showPlaceholder("-", NO_BATTERY_TITLE);
+    else if (view.kind === "old-helper") showPlaceholder("!", OLD_HELPER_TITLE);
     else showPlaceholder("?", NO_HOST_TITLE);
   }
   savePainted();
+  maybeOpenSetup();
+}
+
+// Right after installation, if the helper is missing, open the setup page
+// once: otherwise a new user just sees a "?" button and nothing else.
+let justInstalled = false;
+function maybeOpenSetup() {
+  if (!justInstalled || !lastView) return;
+  justInstalled = false;
+  if (lastView.kind === "no-host") browser.tabs.create({ url: browser.runtime.getURL("setup.html") });
 }
 
 // ---------------------------------------------------------------------------
@@ -193,12 +213,18 @@ const WATCHDOG_MINUTES = 1;        // normal check interval
 const WATCHDOG_SLOW_MINUTES = 5;   // after repeated failures (host not installed)
 const FAILURES_BEFORE_SLOW = 5;
 const STABLE_MS = 30000;          // a port that lived this long counts as healthy
+const QUICK_DEATHS_BEFORE_GIVING_UP = 3;
+const HOLD_MS = 5000;             // how long a suspect helper must stay up before we trust it
 
 let port = null;
 let failures = 0;
+// Times in a row the helper sent a reading and then died within STABLE_MS.
+// Past the limit we stop showing its readings (they would be stale between
+// crashes) until it proves it can stay up.
+let quickDeaths = 0;
 
 const ready = Promise.all([
-  browser.storage.session.get(["painted", "failures", "view"]),
+  browser.storage.session.get(["painted", "failures", "view", "quickDeaths"]),
   browser.storage.local.get("settings"),
 ])
   .then(([session, local]) => {
@@ -206,6 +232,7 @@ const ready = Promise.all([
     else bootRepaintPending = true; // nothing painted yet this browser session
     if (session.view) lastView = session.view;
     if (Number.isInteger(session.failures)) failures = session.failures;
+    if (Number.isInteger(session.quickDeaths)) quickDeaths = session.quickDeaths;
     settings = Colors.normalizeSettings(local.settings);
   })
   .catch(() => {});
@@ -249,6 +276,23 @@ function connect() {
   port = p;
   const connectedAt = Date.now();
   let gotMessage = false;
+  let held = null;      // latest reading from a helper we do not trust yet
+  let holdTimer = null;
+
+  const setQuickDeaths = (n) => {
+    if (quickDeaths === n) return;
+    quickDeaths = n;
+    browser.storage.session.set({ quickDeaths }).catch(() => {});
+  };
+  const viewFor = (msg) => {
+    if (typeof msg.v === "number" && msg.v < MIN_HELPER_VERSION) return { kind: "old-helper" };
+    return msg.has_battery ? { kind: "battery", state: msg } : { kind: "no-battery" };
+  };
+
+  // A helper that stays connected this long is healthy again.
+  const stableTimer = setTimeout(() => {
+    if (port === p) setQuickDeaths(0);
+  }, STABLE_MS);
 
   p.onMessage.addListener((msg) => {
     if (!isValidState(msg)) {
@@ -257,23 +301,42 @@ function connect() {
     }
     gotMessage = true;
     noteSuccess();
-    render(msg.has_battery ? { kind: "battery", state: msg } : { kind: "no-battery" });
+    if (quickDeaths < QUICK_DEATHS_BEFORE_GIVING_UP) {
+      render(viewFor(msg));
+      return;
+    }
+    // The helper has been crash-looping: wait until it has stayed up a few
+    // seconds before believing it, so the theme does not flap.
+    held = msg;
+    if (!holdTimer) {
+      holdTimer = setTimeout(() => {
+        holdTimer = null;
+        if (port === p && held) render(viewFor(held));
+      }, HOLD_MS);
+    }
   });
 
   p.onDisconnect.addListener(() => {
     if (port === p) port = null;
+    clearTimeout(stableTimer);
+    clearTimeout(holdTimer);
     const reason = p.error ? p.error.message : "host exited";
     console.warn("Battery Theme: host disconnected:", reason);
     if (gotMessage && Date.now() - connectedAt > STABLE_MS) {
       // It had been working for a while, so this is a one-off crash or a
       // sleep/wake hiccup. Keep the current theme and retry right away; the
       // watchdog alarm is the backstop if this page gets suspended first.
+      // (If that retry finds no helper, the no-host branch below runs.)
+      setQuickDeaths(0);
       setTimeout(connect, 2000);
     } else if (gotMessage) {
       // It spoke and then died almost immediately: a crash-looping host.
-      // Keep the last theme and let the (backing-off) watchdog retry, rather
-      // than respawning it every two seconds.
+      // Let the (backing-off) watchdog retry rather than respawning it every
+      // two seconds, and after a few rounds stop showing its last reading,
+      // which would otherwise sit there going stale.
+      setQuickDeaths(quickDeaths + 1);
       noteFailure();
+      if (quickDeaths >= QUICK_DEATHS_BEFORE_GIVING_UP) render({ kind: "no-host" });
     } else {
       // Never heard from it: not installed, or broken.
       noteFailure();
@@ -295,7 +358,11 @@ browser.runtime.onMessage.addListener((msg) => {
 
 // Registering these makes Firefox start the event page on launch / update.
 browser.runtime.onStartup.addListener(() => {});
-browser.runtime.onInstalled.addListener(() => {});
+browser.runtime.onInstalled.addListener((details) => {
+  if (details.reason !== "install") return;
+  justInstalled = true;
+  ready.then(maybeOpenSetup); // in case the first connection attempt already finished
+});
 
 ready.then(async () => {
   if (!(await browser.alarms.get(WATCHDOG_ALARM))) setWatchdog(WATCHDOG_MINUTES);

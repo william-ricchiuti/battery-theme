@@ -143,3 +143,43 @@ test("install.sh picks the right helper per system; Linux install and uninstall 
   assert.strictEqual(other.status, 1);
   assert.match(other.stderr, /Unsupported system/);
 });
+
+test("install.sh piped from curl downloads the helper files and installs; --uninstall removes them", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "bt-home-"));
+  const script = read(path.join(ROOT, "install.sh"));
+  // Simulate `curl ... | bash`: the script arrives on stdin and has no file of
+  // its own, so it must fetch host files from BASE_URL (here: this checkout).
+  const piped = (args = []) =>
+    spawnSync("/bin/bash", ["-s", "--", ...args], {
+      input: script,
+      cwd: home,
+      env: { PATH: process.env.PATH, HOME: home, BATTERY_THEME_OS: "Darwin", BATTERY_THEME_BASE_URL: `file://${ROOT}` },
+      encoding: "utf8",
+    });
+  const dest = path.join(home, "Library", "Application Support", "Mozilla", "NativeMessagingHosts");
+
+  const r = piped();
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.strictEqual(read(path.join(dest, "battery-host.sh")), read(path.join(ROOT, "host", "mac", "battery-host.sh")));
+  assert.strictEqual(JSON.parse(read(path.join(dest, "com.williamricchiuti.batterytheme.json"))).path, path.join(dest, "battery-host.sh"));
+
+  assert.strictEqual(piped(["--uninstall"]).status, 0);
+  assert.deepStrictEqual(fs.readdirSync(dest), []);
+
+  const bad = spawnSync("/bin/bash", ["-s"], {
+    input: script,
+    env: { PATH: process.env.PATH, HOME: home, BATTERY_THEME_OS: "Darwin", BATTERY_THEME_BASE_URL: "file:///nonexistent" },
+    encoding: "utf8",
+  });
+  assert.strictEqual(bad.status, 1);
+  assert.match(bad.stderr, /Could not download/);
+});
+
+test("mac installer handles a home folder with awkward characters", () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "bt-home-"));
+  const home = path.join(base, 'we|ird & "quoted" name');
+  fs.mkdirSync(home);
+  assert.strictEqual(run(path.join(ROOT, "host", "mac", "install.sh"), home).status, 0);
+  const dest = path.join(home, "Library", "Application Support", "Mozilla", "NativeMessagingHosts");
+  assert.strictEqual(JSON.parse(read(path.join(dest, "com.williamricchiuti.batterytheme.json"))).path, path.join(dest, "battery-host.sh"));
+});

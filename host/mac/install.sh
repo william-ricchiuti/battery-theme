@@ -1,7 +1,7 @@
 #!/bin/bash
 # Install script for the Battery Theme native messaging host on macOS.
-# Copies the host script and manifest to the Firefox native messaging hosts directory.
-# Replaces the __SCRIPT_DIR__ placeholder in the manifest with the actual path.
+# Copies the host script to the Firefox native messaging hosts directory and
+# writes the manifest that tells Firefox where it is.
 
 set -e
 
@@ -16,15 +16,19 @@ cp "$SCRIPT_DIR/battery-host.sh" "$DEST_DIR/battery-host.sh"
 chmod +x "$DEST_DIR/battery-host.sh"
 
 MANIFEST_DEST="$DEST_DIR/com.williamricchiuti.batterytheme.json"
-cp "$SCRIPT_DIR/com.williamricchiuti.batterytheme.json" "$MANIFEST_DEST"
 
-# Replace the placeholder path with the actual destination.
-# macOS sed requires an empty backup extension flag for in-place edits.
-if [[ "$(uname)" == "Darwin" ]]; then
-    sed -i '' "s|__SCRIPT_DIR__|$DEST_DIR|g" "$MANIFEST_DEST"
-else
-    sed -i "s|__SCRIPT_DIR__|$DEST_DIR|g" "$MANIFEST_DEST"
-fi
+# JSON-escape the path (backslashes and double quotes).
+escaped="${DEST_DIR//\\/\\\\}"
+escaped="${escaped//\"/\\\"}"
+cat >"$MANIFEST_DEST" <<JSON
+{
+    "name": "com.williamricchiuti.batterytheme",
+    "description": "Native messaging host for Battery Theme extension",
+    "path": "$escaped/battery-host.sh",
+    "type": "stdio",
+    "allowed_extensions": ["battery-theme@willy.dev"]
+}
+JSON
 
 echo "Installed:"
 echo "  Script:   $DEST_DIR/battery-host.sh"

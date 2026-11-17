@@ -18,12 +18,12 @@ Firefox can't read the battery on its own, so there are two parts:
 ### 1. The helper (macOS and Linux)
 
 ```bash
-git clone https://github.com/william-ricchiuti/battery-theme && bash battery-theme/install.sh
+curl -fsSL https://raw.githubusercontent.com/william-ricchiuti/battery-theme/main/install.sh | bash
 ```
 
-No `git`? Download the ZIP from the green **Code** button on GitHub, unzip it, and run `bash install.sh` inside the folder. The helper is installed for your user only; no `sudo`.
+That downloads two small scripts for your system and installs them for your user only; no `sudo`. If you'd rather read the code first, download or clone this repository and run `bash install.sh` inside it.
 
-On Windows, download the project and run `host\windows\install.bat`.
+On Windows, download the project and run `host\\windows\\install.bat`.
 
 ### 2. The extension
 
@@ -40,7 +40,11 @@ Click the battery button in the toolbar to see the percentage, time remaining an
 | Tint strength | How strongly the battery colour tints the browser. |
 | Show percentage on the toolbar button | Adds the number as a badge on the button. |
 
-If the button shows **?**, the helper isn't connected: run the install command above, then use **Try again** in the popup. If it shows **-**, the computer has no battery and the theme stays out of the way.
+| Tint Firefox with the battery colour | Turn off to pause the tint. The button and popup keep showing the battery. |
+
+While the tint is on, Battery Theme takes over the browser theme and repaints if another theme is applied. Pause it (or disable the add-on) to use a different theme.
+
+If the button shows **?**, the helper isn't connected: the add-on opens a setup page the first time, and the popup has the install command and a **Try again** button. If it shows **-**, the computer has no battery and the theme stays out of the way.
 
 To see every colour state without waiting for your battery to drain, open `preview.html` in a browser.
 
@@ -57,8 +61,10 @@ Then set `toolkit.legacyUserProfileCustomizations.stylesheets` to `true` in `abo
 ## Uninstall
 
 ```bash
-bash install.sh --uninstall
+curl -fsSL https://raw.githubusercontent.com/william-ricchiuti/battery-theme/main/install.sh | bash -s -- --uninstall
 ```
+
+(or `bash install.sh --uninstall` from a copy of the project)
 
 ```bash
 bash userChrome/install-userchrome.sh --uninstall

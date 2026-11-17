@@ -29,6 +29,7 @@
     intensity: 1,        // 0.5 = subtler, 1.5 = stronger tinting
     appearance: "auto",  // "auto" (follow the OS) | "dark" | "light"
     badge: false,        // show the percentage as a badge on the toolbar button
+    enabled: true,       // false = leave the browser theme alone (button and popup keep working)
   };
 
   // Accent stops per palette: [percentage, L, C, h] in OKLCH, tuned for dark
@@ -72,7 +73,7 @@
     },
     light: {
       deep: [249, 249, 251],
-      frame: [230, 230, 235],
+      frame: [220, 220, 227],
       toolbar: [246, 246, 248],
       field: [255, 255, 255],
       dim: [240, 240, 244],
@@ -180,6 +181,16 @@
     return { bg, text };
   }
 
+  // Firefox draws no shadow under the selected tab, so it has to stand out
+  // from the strip by lightness. If it does not, lift it toward white.
+  const MIN_TAB_SEPARATION = 1.25;
+  function separateFrom(surface, backdrop) {
+    for (let i = 0; i < 25 && contrast(surface, backdrop) < MIN_TAB_SEPARATION; i++) {
+      surface = mix(surface, [255, 255, 255], 0.05);
+    }
+    return surface;
+  }
+
   const css = (c) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
 
   // -------------------------------------------------------------------------
@@ -191,6 +202,7 @@
     if (!["auto", "dark", "light"].includes(out.appearance)) out.appearance = "auto";
     out.intensity = Number.isFinite(out.intensity) ? Math.max(0, Math.min(2, out.intensity)) : 1;
     out.badge = out.badge === true;
+    out.enabled = out.enabled !== false;
     return out;
   }
 
@@ -297,7 +309,7 @@
     const frame = mix(B.frame, accent, tFrame);
     const frameInactive = mix(frame, B.dim, 0.35);
     const toolbar = mix(B.toolbar, accent, tToolbar);
-    const tab = readableSurface(mix(toolbar, accent, tTab), B.text);
+    const tab = readableSurface(separateFrom(mix(toolbar, accent, tTab), frame), B.text);
     const tabSelected = tab.bg;
     const popup = B.toolbar;
     const highlight = readableSurface(mix(B.toolbar, accent, 0.3), B.text);
@@ -361,6 +373,7 @@
     DEFAULT_SETTINGS,
     PALETTES,
     MIN_CONTRAST,
+    MIN_TAB_SEPARATION,
     normalizeSettings,
     powerKind,
     isDark,

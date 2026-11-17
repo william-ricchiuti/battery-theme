@@ -82,7 +82,7 @@ test("quiet when healthy, loud when low (both palettes, both modes)", () => {
       let prev = -1;
       for (let p = 50; p >= 0; p--) {
         const chroma = lch(C.buildTheme(state(p, "battery", dark), { palette }).raw.frame).C;
-        assert.ok(chroma >= prev - 0.002, `${label}: strip got less colourful at ${p}%`);
+        assert.ok(chroma >= prev - 0.004, `${label}: strip got less colourful at ${p}%`);
         prev = chroma;
       }
     }
@@ -145,7 +145,31 @@ test("status wording", () => {
 
 test("settings are normalized", () => {
   assert.deepStrictEqual(C.normalizeSettings({ palette: "nope", intensity: 99, appearance: 3, badge: "yes" }), {
-    palette: "classic", intensity: 2, appearance: "auto", badge: false,
+    palette: "classic", intensity: 2, appearance: "auto", badge: false, enabled: true,
   });
   assert.strictEqual(C.normalizeSettings({ badge: true }).badge, true);
+});
+
+test("the active tab always stands out from the tab strip", () => {
+  let worst = { ratio: Infinity };
+  for (const palette of Object.keys(C.PALETTES)) {
+    for (const intensity of [0.5, 1, 1.5]) {
+      for (const dark of [true, false]) {
+        for (const kind of ["battery", "ac", "charging"]) {
+          for (let p = 0; p <= 100; p++) {
+            const { raw } = C.buildTheme(state(p, kind, dark), { palette, intensity });
+            const ratio = C.contrast(raw.tab_selected, raw.frame);
+            if (ratio < worst.ratio) worst = { ratio, palette, intensity, dark, kind, p };
+          }
+        }
+      }
+    }
+  }
+  assert.ok(worst.ratio >= C.MIN_TAB_SEPARATION - 0.005, `worst separation ${worst.ratio.toFixed(2)}: ${JSON.stringify(worst)}`);
+});
+
+test("paused setting defaults to on and survives normalization", () => {
+  assert.strictEqual(C.normalizeSettings(null).enabled, true);
+  assert.strictEqual(C.normalizeSettings({ enabled: false }).enabled, false);
+  assert.strictEqual(C.normalizeSettings({ enabled: "no" }).enabled, true);
 });

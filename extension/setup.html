@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up Battery Theme</title>
+<link rel="icon" href="icons/icon.svg">
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<main>
+  <img src="icons/icon.svg" alt="" width="56" height="56">
+  <h1 id="title">One more step</h1>
+  <p id="why" class="lead"></p>
+
+  <!-- Waiting for the helper -->
+  <section id="todo">
+    <ol>
+      <li>
+        <p id="how"></p>
+        <div class="command">
+          <code id="command"></code>
+          <button id="copy" type="button">Copy</button>
+        </div>
+      </li>
+      <li>
+        <p>Then check the connection:</p>
+        <button id="check" type="button" class="primary">Check again</button>
+        <span id="result" role="status"></span>
+      </li>
+    </ol>
+    <p class="note">The helper only reads your battery level, charger state, and the light/dark and low-power settings. It makes no network connections and is installed for your user only. You can read it first: <a id="source" target="_blank" rel="noopener noreferrer">source on GitHub</a>.</p>
+  </section>
+
+  <!-- Connected -->
+  <section id="done" hidden>
+    <h2>Connected</h2>
+    <p id="doneText"></p>
+    <p>Click the battery button in the toolbar any time to see the level and change the colours. You can close this tab.</p>
+  </section>
+</main>
+<script src="setup-help.js"></script>
+<script src="setup.js"></script>
+</body>
+</html>

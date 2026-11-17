@@ -9,10 +9,12 @@ A Firefox WebExtension (Manifest V3) + Native Messaging Host that acts as an **a
 ```
 battery-theme/
 ├── extension/
-│   ├── manifest.json          # MV3, theme + nativeMessaging permissions, gecko id
+│   ├── manifest.json          # MV3; theme, nativeMessaging, alarms, storage; gecko id
 │   ├── theme-colors.js        # colour model (OKLCH, urgency, light/dark, contrast)
 │   ├── background.js          # connectNative, lifecycle, theme.update, icon + badge
-│   └── popup.html/.css/.js    # status + settings popup
+│   ├── popup.html/.css/.js    # status + settings popup
+│   ├── setup.html/.css/.js    # first-run page shown once when the helper is missing
+│   └── setup-help.js          # install command text shared by popup and setup page
 ├── host/
 │   ├── mac/
 │   │   ├── battery-host.sh                        # pmset -g pslog events + 60s heartbeat, emit-on-change
@@ -36,7 +38,7 @@ battery-theme/
 └── HANDOFF.md                  # this file
 ```
 
-## How it works (v1.4)
+## How it works (v1.6)
 
 1. **Native host (macOS)** — `host/mac/battery-host.sh`. Event-driven: `pmset -g pslog` prints a line on every power-source change, which triggers a state read, so plugging in shows within about a second. A 60s heartbeat re-reads the state to catch Low Power Mode and light/dark changes. It only writes when the state changes and exits when Firefox closes stdin.
 2. **Protocol v1** — 32-bit little-endian length prefix + UTF-8 JSON:
@@ -45,6 +47,16 @@ battery-theme/
 3. **Extension** — `connectNative`, then `browser.theme.update()`. Three honest views: battery (themed), no battery (user's own theme, "-" icon), helper not connected (user's own theme, "?" icon; the popup shows the install command and a Try again button). It never paints a made-up level.
 4. **Popup** — `popup.html/.css/.js`. Shows percentage, status, time remaining and Low Power Mode, plus the settings. It reads the current view from `storage.session.view` (published by the background on every render), writes `storage.local.settings`, and messages the background (`wake` on open, `retry` on Try again). The percentage badge on the toolbar button is now off by default (`settings.badge`).
 5. **Lifecycle** — the background is an MV3 event page. A 1-minute `watchdog` alarm reconnects after host failures (slowing to 5 minutes after 5 failures in a row), and what is painted is kept in `storage.session` so a wake-up does not repaint an unchanged theme.
+
+### Behaviours added in v1.5.1 - v1.6
+
+- **Repaint guard.** Firefox's default theme can overwrite the first paint at browser start. The background repaints on any `theme.onUpdated` it did not cause (max 3 per minute) and once 4s after the first paint of a session.
+- **Pause.** `settings.enabled = false` resets the theme and stops reclaiming it; the button and popup still show the reading.
+- **Crash-looping helper.** A helper that sends a reading and dies within 30s three times in a row is treated as missing (no stale reading left on screen); its next readings are held for 5s before being trusted.
+- **Helper version.** A helper whose `v` is below `MIN_HELPER_VERSION` (background.js) shows an "update the helper" notice instead of a reading. Bump both sides together when the message format changes.
+- **Setup page.** Opened once on install if the first connection finds no helper.
+- **Active tab.** `tab_selected` is lifted until it has at least 1.25:1 contrast against the strip (tested).
+- **Install.** `install.sh` also works piped from `curl`: with no project files beside it, it downloads `host/<os>/{battery-host,install,uninstall}.sh` from `BATTERY_THEME_BASE_URL` (default: `main` on GitHub).
 
 ### Facts checked on Firefox 160 (2026-11-16, headless, temporary add-on)
 
@@ -80,7 +92,7 @@ All colour logic is in `extension/theme-colors.js` (pure functions, shared by th
 - **OKLCH.** Accent stops are defined in OKLCH and surfaces are blended in OKLab, so there is no olive between green and red.
 - **Light and dark** follow the OS via the host's `dark` field (unknown = dark).
 - **Contrast is measured.** Every text colour is picked by WCAG ratio; mid-tone surfaces are nudged until they clear 4.5:1. Tests sweep every percentage, mode, palette and intensity.
-- **Settings** live in `storage.local` under `settings`: `palette` (`classic` | `cvd`), `intensity` (0-2, default 1), `appearance` (`auto` | `dark` | `light`), `badge` (boolean, default off). The popup edits them; the background re-renders when the key changes.
+- **Settings** live in `storage.local` under `settings`: `palette` (`classic` | `cvd`), `intensity` (0-2, default 1), `appearance` (`auto` | `dark` | `light`), `badge` (boolean, default off), `enabled` (boolean, default on). The popup edits them; the background re-renders when the key changes.
 - `userChrome/battery-theme.css` (optional) outlines inactive tabs using colours mixed from the tab text colour, so it follows light/dark and the battery tint.
 
 ## Performance (deliberately low-impact)

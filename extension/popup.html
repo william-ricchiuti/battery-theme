@@ -18,6 +18,7 @@
     </div>
     <div class="meter" role="img" aria-label="Battery level"><div id="fill" class="fill"></div></div>
     <div id="lowPower" class="chip" hidden>Low Power Mode</div>
+    <div id="paused" class="chip" hidden>Tint paused</div>
   </section>
 
   <!-- No reading: helper missing, no battery, or still connecting -->
@@ -25,11 +26,16 @@
     <h1 id="noticeTitle"></h1>
     <p id="noticeBody"></p>
     <code id="noticeCommand" hidden></code>
-    <a id="noticeLink" hidden target="_blank" rel="noopener noreferrer">Setup instructions</a>
+    <a id="noticeLink" hidden target="_blank" rel="noopener noreferrer">Open the setup page</a>
     <button id="retry" type="button" hidden>Try again</button>
   </section>
 
   <form id="settings">
+    <label class="check">
+      <input type="checkbox" name="enabled">
+      <span>Tint Firefox with the battery colour</span>
+    </label>
+
     <fieldset>
       <legend>Colours</legend>
       <div class="segmented">
@@ -63,6 +69,7 @@
   </form>
 </main>
 <script src="theme-colors.js"></script>
+<script src="setup-help.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>
