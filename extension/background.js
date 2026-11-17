@@ -19,7 +19,7 @@ const HOST_NAME = "com.williamricchiuti.batterytheme";
 // Colour model lives in theme-colors.js (loaded first; see manifest).
 const Colors = globalThis.BatteryColors;
 
-// User settings (palette / intensity / appearance / badge / enabled). Stored in storage.local
+// User settings (palette / intensity / appearance / badge / enabled / gauge). Stored in storage.local
 // under "settings"; a settings UI only has to write that key.
 let settings = Colors.normalizeSettings(null);
 

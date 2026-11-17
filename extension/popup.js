@@ -60,6 +60,7 @@ function draw() {
   form.elements.intensity.value = String(Math.max(0.5, Math.min(1.5, settings.intensity)));
   form.elements.badge.checked = settings.badge;
   form.elements.enabled.checked = settings.enabled;
+  form.elements.gauge.checked = settings.gauge;
 
   if (view && view.kind === "battery") {
     const { state } = view;
@@ -106,6 +107,7 @@ function saveSettings() {
     intensity: Number(form.elements.intensity.value),
     badge: form.elements.badge.checked,
     enabled: form.elements.enabled.checked,
+    gauge: form.elements.gauge.checked,
   });
   browser.storage.local.set({ settings });
   draw();

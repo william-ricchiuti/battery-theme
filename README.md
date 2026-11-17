@@ -1,6 +1,8 @@
 # Battery Theme
 
-A Firefox theme that reflects your laptop's battery. When the battery is healthy the browser looks almost neutral. As it drains, the tab strip, the active tab and then the toolbar shift from green through amber to red. While charging it turns blue.
+A Firefox theme that reflects your laptop's battery. The tab strip fills up to your charge level like a gauge, and its colour shifts from green through amber to red as the battery drains, spreading to the active tab and toolbar when it gets low. While charging it turns blue.
+
+![Battery Theme at 20%](docs/screenshots/2-low-dark.png)
 
 Firefox can't read the battery on its own, so there are two parts:
 
@@ -38,6 +40,7 @@ Click the battery button in the toolbar to see the percentage, time remaining an
 | Colours | **Green to red**, or **Colour-blind safe** (neutral to orange). Charging is blue in both. |
 | Appearance | Follow the system's light/dark mode, or force one. |
 | Tint strength | How strongly the battery colour tints the browser. |
+| Fill the tab strip to the battery level | The gauge. Turn off for an even tint across the whole strip, which is also much quieter when the battery is healthy. |
 | Show percentage on the toolbar button | Adds the number as a badge on the button. |
 
 | Tint Firefox with the battery colour | Turn off to pause the tint. The button and popup keep showing the battery. |
@@ -81,6 +84,7 @@ npm run build     # zip in web-ext-artifacts/
 npm start         # run in a scratch Firefox profile
 ```
 
+- `extension/gauge/` holds the generated gauge images; `npm run gauge` rebuilds them (a test fails if they are stale).
 - `extension/theme-colors.js` is the whole colour model: pure functions, with tests that check text contrast at every battery level.
 - `extension/background.js` talks to the helper and applies the theme.
 - `host/mac/battery-host.sh --json` (or `host/linux/...`) prints the state the helper would send.

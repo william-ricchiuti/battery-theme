@@ -42,10 +42,12 @@ test("every text colour meets WCAG AA on its surface, in every state", () => {
       for (const dark of [true, false]) {
         for (const kind of ["battery", "ac", "charging"]) {
           for (let p = 0; p <= 100; p++) {
-            const { raw } = C.buildTheme(state(p, kind, dark), { palette, intensity });
+            for (const gauge of [true, false]) {
+            const { raw } = C.buildTheme(state(p, kind, dark), { palette, intensity, gauge });
             for (const [fg, bg] of TEXT_PAIRS) {
               const ratio = C.contrast(raw[fg], raw[bg]);
-              if (ratio < worst.ratio) worst = { ratio, fg, bg, palette, intensity, dark, kind, p };
+              if (ratio < worst.ratio) worst = { ratio, fg, bg, palette, intensity, dark, kind, p, gauge };
+            }
             }
           }
         }
@@ -67,8 +69,10 @@ test("theme output is well-formed", () => {
 test("quiet when healthy, loud when low (both palettes, both modes)", () => {
   for (const palette of Object.keys(C.PALETTES)) {
     for (const dark of [true, false]) {
-      const neutral = C.buildTheme(state(100, "ac", dark), { palette, intensity: 0 }).raw;
-      const tint = (p, key) => distance(C.buildTheme(state(p, "battery", dark), { palette }).raw[key], neutral[key]);
+      // The "quiet" rules describe the plain tint; the gauge deliberately
+      // keeps the filled part visible and is covered by its own tests.
+      const neutral = C.buildTheme(state(100, "ac", dark), { palette, intensity: 0, gauge: false }).raw;
+      const tint = (p, key) => distance(C.buildTheme(state(p, "battery", dark), { palette, gauge: false }).raw[key], neutral[key]);
       const label = `${palette}/${dark ? "dark" : "light"}`;
       // Healthy: strip barely tinted, toolbar untouched.
       assert.ok(tint(80, "frame") < 0.06, `${label}: strip should be near-neutral at 80%`);
@@ -81,7 +85,7 @@ test("quiet when healthy, loud when low (both palettes, both modes)", () => {
       // gets more colourful as the battery drains.
       let prev = -1;
       for (let p = 50; p >= 0; p--) {
-        const chroma = lch(C.buildTheme(state(p, "battery", dark), { palette }).raw.frame).C;
+        const chroma = lch(C.buildTheme(state(p, "battery", dark), { palette, gauge: false }).raw.frame).C;
         assert.ok(chroma >= prev - 0.004, `${label}: strip got less colourful at ${p}%`);
         prev = chroma;
       }
@@ -121,7 +125,9 @@ test("colour-blind palette stays on the blue/orange axis", () => {
 });
 
 test("theme key: stable while plugged in, steps while draining, reacts to mode and settings", () => {
-  assert.strictEqual(C.themeKey(state(40, "charging"), null), C.themeKey(state(90, "charging"), null));
+  assert.strictEqual(C.themeKey(state(40, "charging"), { gauge: false }), C.themeKey(state(90, "charging"), { gauge: false }));
+  assert.notStrictEqual(C.themeKey(state(40, "charging"), null), C.themeKey(state(90, "charging"), null), "gauge follows the level while charging");
+  assert.notStrictEqual(C.themeKey(state(70), null), C.themeKey(state(70), { gauge: false }));
   assert.strictEqual(C.themeKey(state(70), null), C.themeKey(state(70.4), null));
   assert.notStrictEqual(C.themeKey(state(70), null), C.themeKey(state(64), null));
   assert.notStrictEqual(C.themeKey(state(70), null), C.themeKey(state(70, "charging"), null));
@@ -145,7 +151,7 @@ test("status wording", () => {
 
 test("settings are normalized", () => {
   assert.deepStrictEqual(C.normalizeSettings({ palette: "nope", intensity: 99, appearance: 3, badge: "yes" }), {
-    palette: "classic", intensity: 2, appearance: "auto", badge: false, enabled: true,
+    palette: "classic", intensity: 2, appearance: "auto", badge: false, enabled: true, gauge: true,
   });
   assert.strictEqual(C.normalizeSettings({ badge: true }).badge, true);
 });
@@ -157,9 +163,14 @@ test("the active tab always stands out from the tab strip", () => {
       for (const dark of [true, false]) {
         for (const kind of ["battery", "ac", "charging"]) {
           for (let p = 0; p <= 100; p++) {
-            const { raw } = C.buildTheme(state(p, kind, dark), { palette, intensity });
-            const ratio = C.contrast(raw.tab_selected, raw.frame);
-            if (ratio < worst.ratio) worst = { ratio, palette, intensity, dark, kind, p };
+            for (const gauge of [true, false]) {
+              const built = C.buildTheme(state(p, kind, dark), { palette, intensity, gauge });
+              const backdrops = gauge ? [built.raw.frame, built.gauge.empty] : [built.raw.frame];
+              for (const b of backdrops) {
+                const ratio = C.contrast(built.raw.tab_selected, b);
+                if (ratio < worst.ratio) worst = { ratio, palette, intensity, dark, kind, p, gauge };
+              }
+            }
           }
         }
       }
@@ -172,4 +183,60 @@ test("paused setting defaults to on and survives normalization", () => {
   assert.strictEqual(C.normalizeSettings(null).enabled, true);
   assert.strictEqual(C.normalizeSettings({ enabled: false }).enabled, false);
   assert.strictEqual(C.normalizeSettings({ enabled: "no" }).enabled, true);
+});
+
+test("gauge: inactive-tab text is readable on both the filled and the empty part of the strip", () => {
+  let worst = { ratio: Infinity };
+  for (const palette of Object.keys(C.PALETTES)) {
+    for (const intensity of [0.5, 1, 1.5, 2]) {
+      for (const dark of [true, false]) {
+        for (const kind of ["battery", "ac", "charging"]) {
+          for (let p = 0; p <= 100; p++) {
+            const built = C.buildTheme(state(p, kind, dark), { palette, intensity });
+            const ratio = C.contrast(built.raw.tab_background_text, built.gauge.empty);
+            if (ratio < worst.ratio) worst = { ratio, palette, intensity, dark, kind, p };
+          }
+        }
+      }
+    }
+  }
+  assert.ok(worst.ratio >= C.MIN_CONTRAST, `worst contrast on the empty part ${worst.ratio.toFixed(2)}: ${JSON.stringify(worst)}`);
+});
+
+test("gauge: the filled part is visibly different from the empty part at every level", () => {
+  for (const palette of Object.keys(C.PALETTES)) {
+    for (const dark of [true, false]) {
+      for (const kind of ["battery", "ac", "charging"]) {
+        for (let p = 0; p <= 100; p += 5) {
+          const built = C.buildTheme(state(p, kind, dark), { palette });
+          const d = distance(built.raw.frame, built.gauge.empty);
+          // The colour-blind palette is near-neutral when healthy by design,
+          // so there the difference is mostly lightness and is smaller.
+          assert.ok(d > 0.02, `${palette}/${dark ? "dark" : "light"}/${kind} ${p}%: filled part too close to empty (${d.toFixed(3)})`);
+        }
+      }
+    }
+  }
+});
+
+test("gauge: theme points at an image that exists and matches the generator; off means no image", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const ext = path.join(__dirname, "..", "extension");
+  for (const dark of [true, false]) {
+    for (const level of C.gaugeLevels()) {
+      const file = C.gaugeFile(dark, level);
+      assert.strictEqual(fs.readFileSync(path.join(ext, file), "utf8"), C.gaugeSvg(dark, level), `${file} is stale: run npm run gauge`);
+    }
+  }
+  assert.strictEqual(fs.readdirSync(path.join(ext, "gauge")).length, 2 * C.gaugeLevels().length, "no stray files");
+
+  const on = C.buildTheme(state(61), null);
+  assert.deepStrictEqual(on.theme.images.additional_backgrounds, ["gauge/dark-62.svg"]);
+  assert.deepStrictEqual(C.buildTheme(state(61, "battery", false), null).theme.images.additional_backgrounds, ["gauge/light-62.svg"]);
+  assert.strictEqual(C.buildTheme(state(0), null).gauge.level, 0);
+  assert.strictEqual(C.buildTheme(state(100), null).gauge.level, 100);
+  const off = C.buildTheme(state(61), { gauge: false });
+  assert.strictEqual(off.theme.images, undefined);
+  assert.strictEqual(off.gauge, null);
 });
