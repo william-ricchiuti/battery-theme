@@ -29,7 +29,7 @@ test("a battery reading themes the real browser window", { skip }, async () => {
     const want = expected(state);
     const t = await b.waitForTheme((t) => t.frame === rgb(want.raw.frame), "frame colour for 42%");
     assert.ok(t.lwtheme, "a theme is active");
-    assert.match(t.images, /gauge\\?\/r\d+-dark-42\\?\.svg/, "gauge image for 42%");
+    assert.deepStrictEqual(t.gauge, { level: 42, variant: "" }, "gauge image for 42%, dark");
     assert.strictEqual(t.paintedSelectedTab, rgb(want.raw.tab_selected), "selected tab colour as painted");
     assert.strictEqual(t.field, rgb(want.raw.toolbar_field));
 
@@ -39,7 +39,7 @@ test("a battery reading themes the real browser window", { skip }, async () => {
     const light = b.setState({ percentage: 42, dark: false });
     const wantLight = expected(light);
     const tl = await b.waitForTheme((t) => t.frame === rgb(wantLight.raw.frame), "light frame");
-    assert.match(tl.images, /light-42/);
+    assert.deepStrictEqual(tl.gauge, { level: 42, variant: "l" });
     await b.setPref("ui.systemUsesDarkTheme", 1);
 
     // Charging is blue and keeps the gauge at the real level.
@@ -59,7 +59,7 @@ test("extreme and odd readings: 0, 1, 100, jumps, and invalid messages", { skip 
       const s = b.setState({ percentage });
       const want = expected(s);
       const t = await b.waitForTheme((t) => t.frame === rgb(want.raw.frame), `frame for ${percentage}%`);
-      assert.ok(t.images.includes(`dark-${want.gauge.level}`), `gauge file for ${percentage}%`);
+      assert.strictEqual(t.gauge.level, want.gauge.level, `gauge file for ${percentage}%`);
     }
     // Invalid readings are ignored: the last good theme stays.
     const good = await b.theme();
@@ -92,7 +92,7 @@ test("an unchanged level costs no repaint; a 2% step costs exactly one", { skip 
     await sleep(600);
     assert.strictEqual(await b.repaints(), 0, "no repaint inside the same 2% step");
     b.setState({ percentage: 57 });
-    await b.waitForTheme((t) => t.images.includes("dark-58") || t.images.includes("dark-56"), "next step");
+    await b.waitForTheme((t) => t.gauge && (t.gauge.level === 58 || t.gauge.level === 56), "next step");
     await sleep(400);
     assert.strictEqual(await b.repaints(), 1, "one repaint for one step");
   });
@@ -103,13 +103,13 @@ test("no battery and no helper both leave the user's own theme alone", { skip },
     const s = b.setState({ percentage: 30 });
     await b.waitForTheme((t) => t.frame === rgb(expected(s).raw.frame), "30%");
     b.setState({ has_battery: false, percentage: null, on_ac: true });
-    await b.waitForTheme((t) => !t.images.includes("gauge"), "theme reset for no battery");
+    await b.waitForTheme((t) => !t.gauge, "theme reset for no battery");
     assert.strictEqual((await b.session()).view.kind, "no-battery");
   });
   await withBrowser({ helper: "none" }, async (b) => {
     await sleep(1500);
     const t = await b.theme();
-    assert.ok(!t.images.includes("gauge"), "no gauge without a helper");
+    assert.ok(!t.gauge, "no gauge without a helper");
     assert.strictEqual((await b.session()).view.kind, "no-host");
     // First install with no helper opens the setup page once.
     const urls = await b.chrome(`return [...gBrowser.tabs].map((t) => t.linkedBrowser.currentURI.spec);`);
@@ -125,7 +125,7 @@ test("helpers that misbehave never leave a wrong reading on screen", { skip }, a
       await b.install();
       await sleep(1500);
       assert.strictEqual((await b.session()).view.kind, "no-host", mode);
-      assert.ok(!(await b.theme()).images.includes("gauge"), mode);
+      assert.ok(!(await b.theme()).gauge, mode);
     });
   }
   // An outdated helper is reported as such, not themed.
@@ -158,7 +158,7 @@ test("pause hands the theme back; another theme is painted over while active", {
     const want = rgb(expected(s).raw.frame);
     await b.waitForTheme((t) => t.frame === want, "70%");
     await b.setSettings({ enabled: false });
-    await b.waitForTheme((t) => !t.images.includes("gauge"), "reset when paused");
+    await b.waitForTheme((t) => !t.gauge, "reset when paused");
     await b.setSettings({ enabled: true });
     await b.waitForTheme((t) => t.frame === want, "theme back after resume");
 
@@ -181,7 +181,7 @@ test("the popup's controls change the real theme", { skip }, async () => {
     await b.inPage(`document.querySelector('input[name=palette][value=cvd]').click();`);
     await b.waitForTheme((t) => t.frame === rgb(expected(s, { palette: "cvd" }).raw.frame), "cvd palette");
     await b.inPage(`document.querySelector('input[name=gauge]').click();`);
-    const t = await b.waitForTheme((t) => !t.images.includes("gauge"), "gauge off");
+    const t = await b.waitForTheme((t) => !t.gauge, "gauge off");
     assert.strictEqual(t.frame, rgb(expected(s, { palette: "cvd", gauge: false }).raw.frame));
     await b.inPage(`document.querySelector('input[name=appearance][value=light]').click();`);
     await b.waitForTheme(
@@ -193,7 +193,7 @@ test("the popup's controls change the real theme", { skip }, async () => {
 test("dropping through 20% flashes once, then settles; not under reduced motion", { skip }, async () => {
   await withBrowser({}, async (b) => {
     b.setState({ percentage: 22 });
-    await b.waitForTheme((t) => t.images.includes("dark-22"), "22%");
+    await b.waitForTheme((t) => t.gauge && t.gauge.level === 22, "22%");
     await sleep(5000);
     await b.startRepaintCounter();
     const s = b.setState({ percentage: 20 });
@@ -203,7 +203,7 @@ test("dropping through 20% flashes once, then settles; not under reduced motion"
   });
   await withBrowser({ prefs: { "ui.prefersReducedMotion": 1 } }, async (b) => {
     b.setState({ percentage: 22 });
-    await b.waitForTheme((t) => t.images.includes("dark-22"), "22%");
+    await b.waitForTheme((t) => t.gauge && t.gauge.level === 22, "22%");
     await sleep(5000);
     await b.startRepaintCounter();
     b.setState({ percentage: 20 });
@@ -233,7 +233,7 @@ test("new windows and private windows get the theme too", { skip }, async () => 
 test("closing Firefox ends the helper", { skip }, async () => {
   let b = await launch();
   b.setState({ percentage: 80 });
-  await b.waitForTheme((t) => t.images.includes("gauge"), "theme");
+  await b.waitForTheme((t) => t.gauge, "theme");
   const fs = require("node:fs");
   const path = require("node:path");
   const logFile = path.join(b.ctrl, "log");
@@ -267,7 +267,7 @@ test("light/dark follows the OS at once, even when the helper cannot tell", { sk
       b.setState({ percentage: 70, dark: null, minutes_remaining: 111 });
     }
     const t = await b.waitForTheme((t) => t.frame === light, "light after the OS switched", 4000);
-    assert.match(t.images, /light-70/);
+    assert.deepStrictEqual(t.gauge, { level: 70, variant: "l" });
     await b.setPref("ui.systemUsesDarkTheme", 1);
     if (!immediate) {
       await sleep(500);
@@ -297,7 +297,7 @@ test("vertical tabs: the gauge stays in the top bar", { skip }, async (t) => {
   if (firefoxVersion().major < 157) return t.skip("backgrounds_area needs Firefox 157+; older versions already keep the image in the toolbox");
   await withBrowser({ prefs: { "sidebar.revamp": true, "sidebar.verticalTabs": true } }, async (b) => {
     b.setState({ percentage: 30 });
-    await b.waitForTheme((t) => t.images.includes("dark-30"), "gauge");
+    await b.waitForTheme((t) => t.gauge && t.gauge.level === 30, "gauge");
     const where = await b.chrome(`
       const cs = (el) => getComputedStyle(el).backgroundImage;
       return { toolbox: cs(document.getElementById("navigator-toolbox")), body: cs(document.body) };`);
@@ -312,8 +312,8 @@ test("right-to-left Firefox mirrors the gauge", { skip }, async (t) => {
   await withBrowser({ install: false, langpack: { path: langpack, locale: "ar" } }, async (b) => {
     b.setState({ percentage: 30 });
     await b.install();
-    const th = await b.waitForTheme((t) => t.images.includes("dark-30"), "gauge");
-    assert.match(th.images, /#rtl|\\#rtl/, "mirrored variant requested");
+    const th = await b.waitForTheme((t) => t.gauge && t.gauge.level === 30, "gauge");
+    assert.strictEqual(th.gauge.variant, "r", "mirrored variant requested");
     assert.strictEqual(await b.chrome(`return document.documentElement.matches(":-moz-locale-dir(rtl)");`), true);
   });
 });
@@ -344,5 +344,49 @@ test("another add-on that keeps changing the theme is not fought forever", { ski
       };
       tick();`, [want], { async: true });
     assert.ok(takeovers <= 4, `we repaint over the other theme a few times, then stop: ${takeovers}`);
+  });
+});
+
+// Reads real rendered pixels, so it catches an image that Firefox accepts but
+// draws wrongly (the dark, light and mirrored variants are one file each,
+// selected by a URL fragment).
+test("the gauge as actually drawn: fill, cover and meter line, in dark, light and mirrored", { skip }, async () => {
+  const near = (a, b, tol = 6) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+  const lum = (c) => C.contrast(c, [0, 0, 0]);
+  await withBrowser({ width: 1200, height: 500 }, async (b) => {
+    for (const dark of [true, false]) {
+      await b.setPref("ui.systemUsesDarkTheme", dark ? 1 : 0);
+      const s = b.setState({ percentage: 40, dark });
+      const want = C.buildTheme(s, {});
+      await b.waitForTheme((t) => t.frame === rgb(want.raw.frame) && t.gauge && t.gauge.variant === (dark ? "" : "l"), `40% ${dark ? "dark" : "light"}`);
+      await sleep(600);
+      const [fill, cover, lit, faint, justInside, justOutside] =
+        await b.pixels([["3%", 14], ["80%", 14], ["3%", 1], ["80%", 1], ["39%", 30], ["41%", 30]]);
+      const mode = dark ? "dark" : "light";
+      assert.ok(near(fill, want.raw.frame), `${mode}: filled part shows the tinted strip, got ${fill}`);
+      assert.ok(near(cover, want.gauge.empty), `${mode}: the rest is the neutral strip, got ${cover}`);
+      assert.ok(!near(justInside, want.gauge.empty, 3) && near(justOutside, want.gauge.empty), `${mode}: the fill ends at 40%`);
+      // Meter line: clearly set off from what is under it, lit part more than faint part.
+      const litStep = C.contrast(lit, fill), faintStep = C.contrast(faint, cover);
+      assert.ok(litStep >= 3, `${mode}: lit meter line stands out (${litStep.toFixed(2)}:1)`);
+      assert.ok(faintStep > 1.1 && faintStep < litStep, `${mode}: faint meter line is there but quieter (${faintStep.toFixed(2)}:1)`);
+      assert.ok(dark ? lum(lit) > lum(fill) : lum(lit) < lum(fill), `${mode}: line ink is the right way round`);
+    }
+    // Mirrored: paint the right-to-left variant by hand (it does not need an RTL browser to render).
+    await b.setPref("ui.systemUsesDarkTheme", 1);
+    await b.setSettings({ enabled: false });
+    await b.waitForTheme((t) => !t.gauge, "paused");
+    for (const dark of [true, false]) {
+      const st = { percentage: 40, on_ac: false, dark };
+      const want = C.buildTheme(st, { appearance: dark ? "dark" : "light" }, { rtl: true });
+      await b.inExtensionPage(`const [theme, done] = arguments; browser.theme.update(theme).then(() => done(1));`, [want.theme]);
+      await b.waitForTheme((t) => t.gauge && t.gauge.variant === (dark ? "r" : "lr"), "mirrored variant applied");
+      await sleep(600);
+      const [fill, cover, lit] = await b.pixels([["97%", 14], ["45%", 14], ["97%", 1]]);
+      const mode = dark ? "dark" : "light";
+      assert.ok(near(fill, want.raw.frame), `mirrored ${mode}: fill is on the right, got ${fill}`);
+      assert.ok(near(cover, want.gauge.empty), `mirrored ${mode}: cover is on the left, got ${cover}`);
+      assert.ok(C.contrast(lit, fill) >= 3, `mirrored ${mode}: lit line on the right`);
+    }
   });
 });

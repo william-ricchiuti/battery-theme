@@ -189,6 +189,13 @@ async function launch(opts = {}) {
 
     // What Firefox has actually applied to the browser window.
     async theme() {
+      const t = await b.rawTheme();
+      // Which gauge image is applied: { level, variant } with variant "" (dark), "l", "r" or "lr".
+      const m = t.images.replace(/\\/g, "").match(/gauge\/r\d+-(\d+)\.svg(?:#(\w+))?/);
+      t.gauge = m ? { level: Number(m[1]), variant: m[2] || "" } : null;
+      return t;
+    },
+    async rawTheme() {
       return b.chrome(`
         const win = window, doc = document, root = doc.documentElement;
         const cs = (el) => (el ? win.getComputedStyle(el) : null);
@@ -278,6 +285,24 @@ async function launch(opts = {}) {
     },
     session: () => b.inExtensionPage(
       `const done = arguments[0]; browser.storage.session.get(null).then(done);`),
+
+    // Colours of real rendered pixels of the browser window, as [r, g, b].
+    // points: [[x, y], ...] in CSS pixels from the window's top-left corner;
+    // x may be a fraction of the window width as a string like "25%".
+    async pixels(points) {
+      return b.chrome(`
+        const [points, done] = arguments;
+        const w = window.innerWidth, h = 120;
+        window.browsingContext.currentWindowGlobal.drawSnapshot(new DOMRect(0, 0, w, h), 1, "rgb(255,0,255)").then((bitmap) => {
+          const canvas = new OffscreenCanvas(w, h);
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(bitmap, 0, 0);
+          done(points.map(([x, y]) => {
+            const px = typeof x === "string" ? Math.round((parseFloat(x) / 100) * w) : x;
+            return Array.from(ctx.getImageData(Math.min(w - 1, Math.max(0, px)), y, 1, 1).data.slice(0, 3));
+          }));
+        }, (e) => done("ERR " + e));`, [points], { async: true });
+    },
 
     async screenshot(file) {
       await client.setContext("chrome");

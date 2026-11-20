@@ -56,7 +56,11 @@ async function shoot(name, sc, outDir) {
   const b = await launch({
     width: sc.width || 1280,
     height: sc.height || (sc.whole ? 520 : 400),
-    prefs: { "layout.css.devPixelRatio": String(scale), ...(sc.prefs || {}) },
+    prefs: {
+      "layout.css.devPixelRatio": String(scale),
+      "ui.systemUsesDarkTheme": sc.state.dark === false ? 0 : 1,
+      ...(sc.prefs || {}),
+    },
     langpack: sc.rtl && process.env.BATTERY_E2E_RTL_LANGPACK
       ? { path: process.env.BATTERY_E2E_RTL_LANGPACK, locale: "ar" } : undefined,
     install: false,

@@ -9,12 +9,10 @@ const C = require("../extension/theme-colors.js");
 const dir = path.join(__dirname, "..", "extension", "gauge");
 fs.mkdirSync(dir, { recursive: true });
 const wanted = new Set();
-for (const dark of [true, false]) {
-  for (const level of C.gaugeLevels()) {
-    const file = C.gaugeFile(dark, level);
-    wanted.add(path.basename(file));
-    fs.writeFileSync(path.join(__dirname, "..", "extension", file), C.gaugeSvg(dark, level));
-  }
+for (const level of C.gaugeLevels()) {
+  const file = C.gaugeFile(true, level); // dark is the plain file name; the other variants are fragments of it
+  wanted.add(path.basename(file));
+  fs.writeFileSync(path.join(__dirname, "..", "extension", file), C.gaugeSvg(level));
 }
 for (const f of fs.readdirSync(dir)) {
   if (!wanted.has(f)) fs.unlinkSync(path.join(dir, f));

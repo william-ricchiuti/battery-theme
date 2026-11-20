@@ -230,26 +230,31 @@ test("gauge: theme points at an image that exists and matches the generator; off
   const fs = require("node:fs");
   const path = require("node:path");
   const ext = path.join(__dirname, "..", "extension");
-  for (const dark of [true, false]) {
-    for (const level of C.gaugeLevels()) {
-      const file = C.gaugeFile(dark, level);
-      assert.strictEqual(fs.readFileSync(path.join(ext, file), "utf8"), C.gaugeSvg(dark, level), `${file} is stale: run npm run gauge`);
-    }
+  for (const level of C.gaugeLevels()) {
+    const file = C.gaugeFile(true, level);
+    assert.strictEqual(fs.readFileSync(path.join(ext, file), "utf8"), C.gaugeSvg(level), `${file} is stale: run npm run gauge`);
   }
-  assert.strictEqual(fs.readdirSync(path.join(ext, "gauge")).length, 2 * C.gaugeLevels().length, "no stray files");
-  // Meter line: at 62% seven cells are (partly) lit and four are (partly) faint.
-  assert.strictEqual((C.gaugeSvg(true, 62).match(/fill-opacity="0.85"/g) || []).length, 7);
-  assert.strictEqual((C.gaugeSvg(true, 62).match(/fill-opacity="0.14"/g) || []).length, 4);
-  // Nothing but the cover and the leading edge is full height (no lines through tab labels).
-  assert.strictEqual((C.gaugeSvg(true, 62).match(/<svg [^>]*height="3"/g) || []).length, 11, "every meter piece is 3px tall");
-  assert.strictEqual((C.gaugeSvg(true, 62).match(/<svg x="62%" overflow="visible">/g) || []).length, 1);
+  assert.strictEqual(fs.readdirSync(path.join(ext, "gauge")).length, C.gaugeLevels().length, "no stray files");
+  // Meter line: a lit dashed line up to the level and a faint one after it, in step with each other.
+  const svg62 = C.gaugeSvg(62);
+  assert.match(svg62, /<line y1="1.5" y2="1.5" x2="62%" pathLength="62" stroke-dasharray="9.84 0.16" style="stroke-opacity:var\(--l\)"\/>/);
+  assert.match(svg62, /x1="62%" x2="100%" pathLength="38" stroke-dasharray="9.84 0.16" stroke-dashoffset="2" style="stroke-opacity:var\(--t\)"\/>/);
+  assert.doesNotMatch(C.gaugeSvg(0), /var\(--l\)"\/>/, "nothing lit at 0%");
+  assert.doesNotMatch(C.gaugeSvg(100), /var\(--t\)"\/>/, "no faint part at 100%");
+  // Only the cover, the glow and the leading edge are full height: nothing runs through the tab labels.
+  assert.strictEqual((svg62.match(/height="100%"/g) || []).length, 3);
+  // The cover colours baked into the image are the model's neutral strip colours.
+  assert.ok(svg62.includes("--e:rgb(22,22,27)") && svg62.includes("--e:rgb(220,220,227)"));
 
+  // One file per level; the fragment picks dark (none), light, right-to-left, or both.
   const on = C.buildTheme(state(61), null);
-  assert.deepStrictEqual(on.theme.images.additional_backgrounds, ["gauge/r3-dark-62.svg"]);
-  assert.deepStrictEqual(C.buildTheme(state(61, "battery", false), null).theme.images.additional_backgrounds, ["gauge/r3-light-62.svg"]);
+  const image = (st, opts) => C.buildTheme(st, null, opts).theme.images.additional_backgrounds[0];
+  assert.strictEqual(image(state(61)), "gauge/r6-62.svg");
+  assert.strictEqual(image(state(61, "battery", false)), "gauge/r6-62.svg#l");
+  assert.strictEqual(image(state(61), { rtl: true }), "gauge/r6-62.svg#r");
+  assert.strictEqual(image(state(61, "battery", false), { rtl: true }), "gauge/r6-62.svg#lr");
   assert.strictEqual(C.buildTheme(state(0), null).gauge.level, 0);
   assert.strictEqual(C.buildTheme(state(100), null).gauge.level, 100);
-  assert.deepStrictEqual(C.buildTheme(state(61), null, { rtl: true }).theme.images.additional_backgrounds, ["gauge/r3-dark-62.svg#rtl"]);
   assert.strictEqual(on.theme.properties.backgrounds_area, "top_toolbars");
   const off = C.buildTheme(state(61), { gauge: false });
   assert.strictEqual(off.theme.images, undefined);
@@ -292,4 +297,21 @@ test("pulse: fires once per threshold on the way down, and its frame is brighter
       }
     }
   }
+});
+
+test("icons stay visible on the toolbar and on both parts of the tab strip, at every tint strength", () => {
+  let worst = Infinity;
+  for (const dark of [true, false]) for (const palette of ["classic", "cvd"]) for (const style of ["vivid", "subtle"])
+    for (const intensity of [0, 0.5, 1, 1.5, 2]) for (const gauge of [true, false])
+      for (const kind of ["battery", "charging", "ac"]) for (let p = 0; p <= 100; p++) {
+        const t = C.buildTheme(state(p, kind, dark), { palette, style, intensity, gauge });
+        const backdrops = [t.raw.toolbar, t.raw.frame, ...(t.gauge ? [t.gauge.empty] : [])];
+        for (const b of backdrops) {
+          const ratio = C.contrast(t.raw.icons, b);
+          worst = Math.min(worst, ratio);
+          assert.ok(ratio >= C.MIN_ICON_CONTRAST,
+            `icons ${ratio.toFixed(2)}:1 at ${p}% ${kind} dark=${dark} ${palette} ${style} x${intensity} gauge=${gauge}`);
+        }
+      }
+  assert.ok(worst >= 3);
 });

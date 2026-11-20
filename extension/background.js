@@ -26,10 +26,11 @@ let settings = Colors.normalizeSettings(null);
 // ---------------------------------------------------------------------------
 // Toolbar icon + badge
 // ---------------------------------------------------------------------------
-function svgIcon(inner) {
+const PLACEHOLDER_GREY = "#8f8f98"; // readable on both light and dark default toolbars
+function svgIcon(inner, outline = PLACEHOLDER_GREY) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <rect x="1" y="4.5" width="11" height="7" rx="1.8" fill="none" stroke="#8f8f98" stroke-width="1.1"/>
-  <rect x="12.3" y="6.6" width="1.5" height="2.8" rx="0.75" fill="#8f8f98"/>
+  <rect x="1" y="4.5" width="11" height="7" rx="1.8" fill="none" stroke="${outline}" stroke-width="1.1"/>
+  <rect x="12.3" y="6.6" width="1.5" height="2.8" rx="0.75" fill="${outline}"/>
   ${inner}
 </svg>`;
   return "data:image/svg+xml;base64," + btoa(svg);
@@ -44,13 +45,16 @@ function batteryIcon(state) {
   const bolt = state.on_ac
     ? `<path d="M 9.6 1.6 L 5.2 8.8 L 8 8.8 L 6.4 14.4 L 11 7 L 8.2 7 Z" fill="${boltColor}" stroke="${fillColor}" stroke-width="0.4"/>`
     : "";
-  return svgIcon(`<rect x="2.2" y="5.7" width="${w}" height="4.6" rx="0.9" fill="${fillColor}"/>${bolt}`);
+  // While we tint the toolbar, the outline takes the theme's icon colour so
+  // it stays visible on it; paused, the toolbar is the user's own.
+  const outline = settings.enabled ? Colors.css(built.raw.icons) : PLACEHOLDER_GREY;
+  return svgIcon(`<rect x="2.2" y="5.7" width="${w}" height="4.6" rx="0.9" fill="${fillColor}"/>${bolt}`, outline);
 }
 
 // Empty battery outline with a mark in it: "?" = no data, "-" = no battery.
 function placeholderIcon(mark) {
   return svgIcon(
-    `<text x="6.5" y="10.6" font-family="sans-serif" font-size="6.5" font-weight="700" text-anchor="middle" fill="#8f8f98">${mark}</text>`
+    `<text x="6.5" y="10.6" font-family="sans-serif" font-size="6.5" font-weight="700" text-anchor="middle" fill="${PLACEHOLDER_GREY}">${mark}</text>`
   );
 }
 

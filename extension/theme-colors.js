@@ -92,6 +92,7 @@
   const INK_DARK = [12, 12, 16];
   const INK_LIGHT = [255, 255, 255];
   const MIN_CONTRAST = 4.5; // WCAG AA for normal text
+  const MIN_ICON_CONTRAST = 3; // WCAG AA for icons and other graphics
 
   // -------------------------------------------------------------------------
   // Colour math
@@ -312,10 +313,10 @@
   const GAUGE_EDGE_PX = 2;    // the leading edge itself
   const GAUGE_CELLS = 10;     // the meter line is cut into battery cells
   const GAUGE_LINE_PX = 3;    // meter line along the top edge of the window
-  const GAUGE_GAP_PX = 2;     // gap between cells in the meter line
+  const GAUGE_GAP = 0.16;     // gap between cells, in percent of the window width (2px at 1250px)
   // Part of every file name. Firefox keeps theme images cached across an
   // extension update, so bump this whenever gaugeSvg changes what it draws.
-  const GAUGE_REV = "r3";
+  const GAUGE_REV = "r6";
   const PULSE_AT = [20, 10];  // flash once when the battery drops through these
 
   const quantize = (percentage) =>
@@ -327,10 +328,12 @@
     return out;
   }
 
-  // `rtl` adds a fragment that makes the same file draw itself mirrored
-  // (see the <style> in gaugeSvg), so right-to-left needs no extra files.
+  // One file per level serves dark, light and right-to-left: the fragment
+  // after the file name picks the variant (see the <style> in gaugeSvg), so
+  // the package carries 51 small images instead of 204.
   function gaugeFile(dark, level, rtl) {
-    return `gauge/${GAUGE_REV}-${dark ? "dark" : "light"}-${level}.svg${rtl ? "#rtl" : ""}`;
+    const variant = dark ? (rtl ? "#r" : "") : rtl ? "#lr" : "#l";
+    return `gauge/${GAUGE_REV}-${level}.svg${variant}`;
   }
 
   // Two parts:
@@ -345,37 +348,48 @@
   // dividers were).
   // The images are static on purpose: Firefox 160 does not run SVG
   // animations in theme images (tried a charging sweep; it froze).
-  function gaugeSvg(dark, level) {
-    const B = BASES[dark ? "dark" : "light"];
-    const empty = css(B.frame);
-    const ink = dark ? "#fff" : "#000";
-    const glow = dark ? 0.2 : 0.12;
-    const edge = dark ? 0.6 : 0.4;
-    const line = dark ? 0.85 : 0.6;
-    const track = dark ? 0.14 : 0.14;
+  const GAUGE_INK = {
+    // e: empty strip colour, i: ink, g: glow, d: leading edge, l: lit line, t: faint line (opacities)
+    dark: { i: "#fff", g: 0.2, d: 0.6, l: 0.85, t: 0.14 },
+    light: { i: "#000", g: 0.12, d: 0.4, l: 0.6, t: 0.14 },
+  };
+  const gaugeVars = (mode) => {
+    const v = GAUGE_INK[mode];
+    return `--e:${css(BASES[mode].frame).replace(/ /g, "")};--i:${v.i};--g:${v.g};--d:${v.d};--l:${v.l};--t:${v.t}`;
+  };
+  // Dark is the default; "#l" switches the variables to light, "#r" mirrors
+  // the drawing, "#lr" does both. (A URL can only name one target.)
+  const GAUGE_STYLE =
+    `<style>#m{${gaugeVars("dark")};transform-origin:50% 50%}` +
+    `#l:target~#m,#lr:target~#m{${gaugeVars("light")}}` +
+    `#r:target~#m,#lr:target~#m{transform:scaleX(-1)}` +
+    `.e{fill:var(--e)}.d{fill:var(--i);fill-opacity:var(--d)}stop{stop-color:var(--i)}` +
+    `line{stroke:var(--i);stroke-width:${GAUGE_LINE_PX}}</style>`;
+
+  function gaugeSvg(level) {
     let out =
-      `<svg xmlns="http://www.w3.org/2000/svg">` +
-      `<style>#m{transform-origin:50% 50%}#rtl:target~#m{transform:scaleX(-1)}</style><defs>` +
-      `<linearGradient id="g"><stop offset="0" stop-color="${ink}" stop-opacity="0"/>` +
-      `<stop offset="1" stop-color="${ink}" stop-opacity="${glow}"/></linearGradient></defs>` +
-      `<g id="rtl"/><g id="m">`;
-    out += `<svg x="${level}%" overflow="visible">`;
+      `<svg xmlns="http://www.w3.org/2000/svg">${GAUGE_STYLE}<g id="l"/><g id="r"/><g id="lr"/><g id="m">` +
+      `<linearGradient id="g"><stop offset="0" stop-opacity="0"/><stop offset="1" style="stop-opacity:var(--g)"/></linearGradient>` +
+      `<svg x="${level}%" overflow="visible">`;
     if (level > 0) {
       out +=
         `<rect x="-${GAUGE_GLOW_PX}" width="${GAUGE_GLOW_PX}" height="100%" fill="url(#g)"/>` +
-        `<rect x="-${GAUGE_EDGE_PX}" width="${GAUGE_EDGE_PX}" height="100%" fill="${ink}" fill-opacity="${edge}"/>`;
+        `<rect class="d" x="-${GAUGE_EDGE_PX}" width="${GAUGE_EDGE_PX}" height="100%"/>`;
     }
-    out += `<rect width="100%" height="100%" fill="${empty}"/></svg>`;
-    // Meter line. Each piece sits in its own clipped box that starts at a
-    // percentage; drawing the piece a couple of pixels in leaves the gap.
-    const piece = (from, to, opacity) =>
-      `<svg x="${from}%" width="${to - from}%" height="${GAUGE_LINE_PX}">` +
-      `<rect x="${from % (100 / GAUGE_CELLS) === 0 && from > 0 ? GAUGE_GAP_PX : 0}" width="100%" height="100%" ` +
-      `fill="${ink}" fill-opacity="${opacity}"/></svg>`;
-    for (let i = 0; i < GAUGE_CELLS; i++) {
-      const from = (100 / GAUGE_CELLS) * i, to = (100 / GAUGE_CELLS) * (i + 1);
-      if (level > from) out += piece(from, Math.min(to, level), line);
-      if (level < to) out += piece(Math.max(from, level), to, track);
+    out += `<rect class="e" width="100%" height="100%"/></svg>`;
+    // Meter line: two dashed lines, lit up to the level and faint after it.
+    // pathLength makes one unit one percent of the window width, so a dash
+    // is one cell (10 units, less the gap) wherever the level falls.
+    const cell = 100 / GAUGE_CELLS;
+    const dash = `stroke-dasharray="${cell - GAUGE_GAP} ${GAUGE_GAP}"`;
+    const y = GAUGE_LINE_PX / 2;
+    if (level > 0) {
+      out += `<line y1="${y}" y2="${y}" x2="${level}%" pathLength="${level}" ${dash} style="stroke-opacity:var(--l)"/>`;
+    }
+    if (level < 100) {
+      out +=
+        `<line y1="${y}" y2="${y}" x1="${level}%" x2="100%" pathLength="${100 - level}" ${dash} ` +
+        `stroke-dashoffset="${level % cell}" style="stroke-opacity:var(--t)"/>`;
     }
     return out + `</g></svg>\n`;
   }
@@ -469,6 +483,16 @@
       stripCandidates.find((c) => worstOnStrip(c) >= MIN_CONTRAST) ||
       stripCandidates.reduce((best, c) => (worstOnStrip(c) > worstOnStrip(best) ? c : best));
 
+    // Toolbar and tab-strip icons share one colour, and it has to stay
+    // visible (3:1, the WCAG figure for graphics) on the toolbar and on both
+    // parts of the strip, also at the strongest tint.
+    const iconBackdrops = [toolbar, ...stripColours];
+    const worstForIcons = (c) => Math.min(...iconBackdrops.map((b) => contrast(c, b)));
+    const iconCandidates = [B.icon, B.text, INK_DARK, INK_LIGHT];
+    const icons =
+      iconCandidates.find((c) => worstForIcons(c) >= MIN_ICON_CONTRAST) ||
+      iconCandidates.reduce((best, c) => (worstForIcons(c) > worstForIcons(best) ? c : best));
+
     const raw = {
       frame,
       frame_inactive: frameInactive,
@@ -476,7 +500,7 @@
       tab_text: tab.text,
       tab_background_text: tabBackgroundText,
       tab_line: accent,
-      icons: B.icon,
+      icons,
       icons_attention: accent,
       toolbar,
       toolbar_text: textOn(toolbar, B.text),
@@ -531,6 +555,7 @@
     DEFAULT_SETTINGS,
     PALETTES,
     MIN_CONTRAST,
+    MIN_ICON_CONTRAST,
     MIN_TAB_SEPARATION,
     normalizeSettings,
     powerKind,

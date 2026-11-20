@@ -7,9 +7,13 @@
     "build": "npx --yes web-ext@8 build --source-dir extension --artifacts-dir web-ext-artifacts --overwrite-dest",
     "start": "npx --yes web-ext@8 run --source-dir extension",
     "sign": "npx --yes web-ext@8 sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted",
-    "check": "npm test && npm run lint",
+    "check": "npm test && npm run lint && npm run check:zip",
     "gauge": "node tools/build-gauge.js",
-    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.e2e.js"
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.e2e.js",
+    "check:zip": "node tools/check-zip.js",
+    "check:shell": "shellcheck install.sh host/mac/*.sh host/linux/*.sh userChrome/*.sh test/docker/*.sh test/fake-bin/* test/fake-bin-linux/* && for f in install.sh host/mac/*.sh host/linux/*.sh userChrome/*.sh; do /bin/bash -n \"$f\" || exit 1; done",
+    "check:all": "npm run check && npm run check:shell && npm run test:e2e",
+    "test:linux": "bash test/docker/linux.sh"
   },
   "license": "MIT",
   "repository": {
