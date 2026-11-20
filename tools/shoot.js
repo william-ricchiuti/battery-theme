@@ -45,7 +45,9 @@ const SCENARIOS = {
   "vertical-8": { state: { percentage: 8 }, prefs: VERTICAL, whole: true },
   "vertical-light-30": { state: { percentage: 30, dark: false }, prefs: VERTICAL, whole: true },
   "compact-40": { state: { percentage: 40 }, prefs: { "browser.uidensity": 1 } },
-  "rtl-30": { state: { percentage: 30 }, prefs: { "intl.l10n.pseudo": "bidi" } },
+  // Needs BATTERY_E2E_RTL_LANGPACK=/path/to/ar.xpi (from ftp.mozilla.org, matching the Firefox version).
+  "rtl-30": { state: { percentage: 30 }, rtl: true },
+  "rtl-8": { state: { percentage: 8 }, rtl: true },
   "newtab-40": { state: { percentage: 40 }, prefs: { "browser.newtabpage.enabled": true }, whole: true, newtab: true },
 };
 
@@ -55,6 +57,8 @@ async function shoot(name, sc, outDir) {
     width: sc.width || 1280,
     height: sc.height || (sc.whole ? 520 : 400),
     prefs: { "layout.css.devPixelRatio": String(scale), ...(sc.prefs || {}) },
+    langpack: sc.rtl && process.env.BATTERY_E2E_RTL_LANGPACK
+      ? { path: process.env.BATTERY_E2E_RTL_LANGPACK, locale: "ar" } : undefined,
     install: false,
   });
   try {

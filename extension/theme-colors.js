@@ -310,10 +310,12 @@
   const GAUGE_MIN_TINT = 0.2; // the filled part must be visible even when healthy
   const GAUGE_GLOW_PX = 26;   // brightening toward the leading edge
   const GAUGE_EDGE_PX = 2;    // the leading edge itself
-  const GAUGE_CELLS = 10;     // the fill is cut into battery cells
+  const GAUGE_CELLS = 10;     // the meter line is cut into battery cells
+  const GAUGE_LINE_PX = 3;    // meter line along the top edge of the window
+  const GAUGE_GAP_PX = 2;     // gap between cells in the meter line
   // Part of every file name. Firefox keeps theme images cached across an
   // extension update, so bump this whenever gaugeSvg changes what it draws.
-  const GAUGE_REV = "r2";
+  const GAUGE_REV = "r3";
   const PULSE_AT = [20, 10];  // flash once when the battery drops through these
 
   const quantize = (percentage) =>
@@ -325,13 +327,22 @@
     return out;
   }
 
-  function gaugeFile(dark, level) {
-    return `gauge/${GAUGE_REV}-${dark ? "dark" : "light"}-${level}.svg`;
+  // `rtl` adds a fragment that makes the same file draw itself mirrored
+  // (see the <style> in gaugeSvg), so right-to-left needs no extra files.
+  function gaugeFile(dark, level, rtl) {
+    return `gauge/${GAUGE_REV}-${dark ? "dark" : "light"}-${level}.svg${rtl ? "#rtl" : ""}`;
   }
 
-  // Layers, back to front: glow + leading edge, the cover over the empty
-  // part, then the cell dividers (gaps in the filled part, faint ghost lines
-  // in the empty part so the scale stays readable).
+  // Two parts:
+  //   1. The fill: the strip is tinted by the theme's frame colour, and this
+  //      image covers everything past the charge level with the neutral
+  //      strip colour. A glow and a bright edge mark where the level is.
+  //   2. The meter line: a thin line along the very top edge, cut into ten
+  //      cells, bright up to the level and faint beyond it. Tabs never reach
+  //      the top few pixels, so the level stays readable when the fill is
+  //      short enough to hide behind the active tab.
+  // Nothing is drawn through the tab labels (the old full-height cell
+  // dividers were).
   // The images are static on purpose: Firefox 160 does not run SVG
   // animations in theme images (tried a charging sweep; it froze).
   function gaugeSvg(dark, level) {
@@ -340,10 +351,14 @@
     const ink = dark ? "#fff" : "#000";
     const glow = dark ? 0.2 : 0.12;
     const edge = dark ? 0.6 : 0.4;
+    const line = dark ? 0.85 : 0.6;
+    const track = dark ? 0.14 : 0.14;
     let out =
-      `<svg xmlns="http://www.w3.org/2000/svg"><defs>` +
+      `<svg xmlns="http://www.w3.org/2000/svg">` +
+      `<style>#m{transform-origin:50% 50%}#rtl:target~#m{transform:scaleX(-1)}</style><defs>` +
       `<linearGradient id="g"><stop offset="0" stop-color="${ink}" stop-opacity="0"/>` +
-      `<stop offset="1" stop-color="${ink}" stop-opacity="${glow}"/></linearGradient></defs>`;
+      `<stop offset="1" stop-color="${ink}" stop-opacity="${glow}"/></linearGradient></defs>` +
+      `<g id="rtl"/><g id="m">`;
     out += `<svg x="${level}%" overflow="visible">`;
     if (level > 0) {
       out +=
@@ -351,12 +366,18 @@
         `<rect x="-${GAUGE_EDGE_PX}" width="${GAUGE_EDGE_PX}" height="100%" fill="${ink}" fill-opacity="${edge}"/>`;
     }
     out += `<rect width="100%" height="100%" fill="${empty}"/></svg>`;
-    for (let i = 1; i < GAUGE_CELLS; i++) {
-      const at = (100 / GAUGE_CELLS) * i;
-      if (at < level) out += `<rect x="${at}%" width="2" height="100%" fill="${empty}"/>`;
-      else if (at > level) out += `<rect x="${at}%" width="1" height="100%" fill="${css(B.line)}"/>`;
+    // Meter line. Each piece sits in its own clipped box that starts at a
+    // percentage; drawing the piece a couple of pixels in leaves the gap.
+    const piece = (from, to, opacity) =>
+      `<svg x="${from}%" width="${to - from}%" height="${GAUGE_LINE_PX}">` +
+      `<rect x="${from % (100 / GAUGE_CELLS) === 0 && from > 0 ? GAUGE_GAP_PX : 0}" width="100%" height="100%" ` +
+      `fill="${ink}" fill-opacity="${opacity}"/></svg>`;
+    for (let i = 0; i < GAUGE_CELLS; i++) {
+      const from = (100 / GAUGE_CELLS) * i, to = (100 / GAUGE_CELLS) * (i + 1);
+      if (level > from) out += piece(from, Math.min(to, level), line);
+      if (level < to) out += piece(Math.max(from, level), to, track);
     }
-    return out + `</svg>\n`;
+    return out + `</g></svg>\n`;
   }
 
   // True when a drain from `before` to `after` percent passes a flash point.
@@ -485,10 +506,18 @@
     for (const key of Object.keys(raw)) colors[key] = css(raw[key]);
 
     const theme = { colors, properties: { color_scheme: dark ? "dark" : "light" } };
+    // Following the OS: say so for web content too. Pages then keep the
+    // system light/dark setting (as they did before), and the background
+    // page can watch that setting through prefers-color-scheme.
+    if (settings.appearance === "auto") theme.properties.content_color_scheme = "system";
     let gauge = null;
     if (settings.gauge) {
       gauge = { level: quantize(state.percentage), empty: B.frame };
-      theme.images = { additional_backgrounds: [gaugeFile(dark, gauge.level)] };
+      theme.images = { additional_backgrounds: [gaugeFile(dark, gauge.level, !!(opts && opts.rtl))] };
+      // Keep the image on the top toolbars. Otherwise Firefox 157+ stretches
+      // it over the whole window, where it shows through the vertical-tabs
+      // sidebar as a stripe. Older versions ignore the property.
+      theme.properties.backgrounds_area = "top_toolbars";
       theme.properties.additional_backgrounds_alignment = ["left top"];
       theme.properties.additional_backgrounds_tiling = ["no-repeat"];
     }

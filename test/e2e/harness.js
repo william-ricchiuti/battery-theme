@@ -91,6 +91,7 @@ function userJs(prefs) {
 //   env      extra environment for Firefox (inherited by the helper)
 //   headless default true; set BATTERY_E2E_HEADFUL=1 to watch
 //   install  default true: load the extension right away
+//   langpack { path, locale }: install a language pack and switch to it first
 async function launch(opts = {}) {
   const firefox = opts.firefox || findFirefox();
   if (!firefox) throw new Error("No Firefox found; set FIREFOX_BIN");
@@ -305,6 +306,14 @@ async function launch(opts = {}) {
     },
   };
 
+  // A language pack (an .xpi from Mozilla) switches the browser UI language,
+  // e.g. to Arabic for right-to-left tests. Must happen before the extension
+  // loads, because the extension reads the direction once at start.
+  if (opts.langpack) {
+    await client.send("Addon:Install", { path: opts.langpack.path, temporary: false });
+    await b.setPref("intl.locale.requested", opts.langpack.locale);
+    await sleep(1500);
+  }
   if (opts.install !== false) await b.install();
   return b;
 }

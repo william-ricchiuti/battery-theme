@@ -36,7 +36,7 @@ function svgIcon(inner) {
 }
 
 function batteryIcon(state) {
-  const built = Colors.buildTheme(state, settings);
+  const built = Colors.buildTheme(shown(state), settings);
   const fillColor = Colors.css(built.accent);
   const w = Math.max(1.6, (state.percentage / 100) * 9.6);
   // The bolt pokes outside the battery body, so it must read on the toolbar.
@@ -122,6 +122,39 @@ let bootRepaintPending = false;
 const MAX_REPAINTS_PER_MINUTE = 3;
 const BOOT_REPAINT_MS = 4000;
 
+// Light or dark. Two sources:
+//   - the helper's `dark` field (null when it cannot tell: Windows helpers
+//     before 1.9, Linux desktops other than GNOME, Flatpak);
+//   - this page's own prefers-color-scheme. Our theme asks Firefox to keep
+//     web content on the system setting (content_color_scheme "system", see
+//     theme-colors.js), so this follows the OS at once, on every platform.
+// Whichever changed last wins, and the helper wins a tie. That way an OS
+// switch shows immediately even though the helper only re-reads the setting
+// once a minute, and a browser that hides the setting from pages
+// (resistFingerprinting reports "light" forever) still follows the helper.
+const darkQuery = globalThis.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
+let helperDark = null; // last `dark` from the helper
+let helperDarkAt = 0;
+let osDarkAt = 0;
+function noteHelperDark(value) {
+  const dark = typeof value === "boolean" ? value : null;
+  if (dark === helperDark) return;
+  helperDark = dark;
+  helperDarkAt = Date.now();
+}
+function resolvedDark() {
+  if (helperDark !== null && (!darkQuery || helperDarkAt >= osDarkAt)) return helperDark;
+  return darkQuery ? darkQuery.matches : null;
+}
+// The state as it is drawn: the helper's reading with light/dark resolved.
+function shown(state) {
+  return { ...state, dark: resolvedDark() };
+}
+
+// Right-to-left Firefox (Arabic, Hebrew, Persian...) lays its tabs out from
+// the right, so the gauge fills from the right too.
+const RTL = browser.i18n.getMessage("@@bidi_dir") === "rtl";
+
 // The OS "reduce motion" setting switches off the flash even when the
 // extension's own motion setting is on.
 const reducedMotion = globalThis.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
@@ -133,7 +166,9 @@ function paintTheme(view, opts) {
   ownUpdates += 1;
   clearTimeout(ownUpdatesTimer);
   ownUpdatesTimer = setTimeout(() => (ownUpdates = 0), 2000); // some calls produce no event
-  if (view.kind === "battery") browser.theme.update(Colors.buildTheme(view.state, paintSettings(), opts).theme);
+  if (view.kind === "battery") {
+    browser.theme.update(Colors.buildTheme(shown(view.state), paintSettings(), { ...opts, rtl: RTL }).theme);
+  }
   else browser.theme.reset();
 }
 
@@ -181,7 +216,9 @@ browser.theme.onUpdated.addListener(() => {
 // Also publishes the current view for the popup, which reads it from
 // storage.session and follows changes via storage.onChanged.
 function savePainted() {
-  browser.storage.session.set({ painted, view: lastView }).catch(() => {});
+  // `dark` is the resolved light/dark, so the popup draws what the chrome shows.
+  const view = lastView && lastView.kind === "battery" ? { ...lastView, state: shown(lastView.state) } : lastView;
+  browser.storage.session.set({ painted, view, helperDark }).catch(() => {});
 }
 
 // view: { kind: "battery", state } | { kind: "no-battery" } | { kind: "no-host" }
@@ -191,7 +228,8 @@ let lastView = null; // re-rendered when settings change
 function render(view) {
   const previous = lastView;
   lastView = view;
-  const viewKey = JSON.stringify({ view, settings });
+  if (view.kind === "battery") noteHelperDark(view.state.dark);
+  const viewKey = JSON.stringify({ view, settings, dark: resolvedDark() });
   if (painted.viewKey === viewKey) return; // nothing changed — no work at all
   painted.viewKey = viewKey;
 
@@ -201,7 +239,7 @@ function render(view) {
     // theme is handed back to the user.
     if (settings.enabled) {
       const ps = paintSettings();
-      setTheme(Colors.themeKey(state, ps), view);
+      setTheme(Colors.themeKey(shown(state), ps), view);
       const drained =
         previous && previous.kind === "battery" && !state.on_ac && !previous.state.on_ac &&
         Colors.crossesPulse(previous.state.percentage, state.percentage);
@@ -249,13 +287,17 @@ let failures = 0;
 let quickDeaths = 0;
 
 const ready = Promise.all([
-  browser.storage.session.get(["painted", "failures", "view", "quickDeaths"]),
+  browser.storage.session.get(["painted", "failures", "view", "quickDeaths", "helperDark"]),
   browser.storage.local.get("settings"),
 ])
   .then(([session, local]) => {
     if (session.painted) painted = session.painted;
     else bootRepaintPending = true; // nothing painted yet this browser session
     if (session.view) lastView = session.view;
+    if (typeof session.helperDark === "boolean") helperDark = session.helperDark;
+    // The stored view carries the resolved light/dark; put the helper's own
+    // value back so a later OS change can still override it.
+    if (lastView && lastView.kind === "battery") lastView.state.dark = helperDark;
     if (Number.isInteger(session.failures)) failures = session.failures;
     if (Number.isInteger(session.quickDeaths)) quickDeaths = session.quickDeaths;
     settings = Colors.normalizeSettings(local.settings);
@@ -403,6 +445,18 @@ if (reducedMotion) {
   reducedMotion.addEventListener("change", () => {
     painted.viewKey = null; // the OS setting is not part of the view key
     if (lastView) render(lastView);
+  });
+}
+
+if (darkQuery) {
+  darkQuery.addEventListener("change", () => {
+    ready.then(() => {
+      // With a forced appearance, web content follows our theme, so this
+      // query only echoes our own choice.
+      if (settings.appearance !== "auto") return;
+      osDarkAt = Date.now();
+      if (lastView) render(lastView);
+    });
   });
 }
 

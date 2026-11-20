@@ -234,15 +234,20 @@ test("gauge: theme points at an image that exists and matches the generator; off
     }
   }
   assert.strictEqual(fs.readdirSync(path.join(ext, "gauge")).length, 2 * C.gaugeLevels().length, "no stray files");
-  // Cells: gaps below the level, ghost lines above it.
-  assert.strictEqual((C.gaugeSvg(true, 62).match(/width="2" height="100%" fill="rgb/g) || []).length, 6);
-  assert.strictEqual((C.gaugeSvg(true, 62).match(/width="1" height="100%"/g) || []).length, 3);
+  // Meter line: at 62% seven cells are (partly) lit and four are (partly) faint.
+  assert.strictEqual((C.gaugeSvg(true, 62).match(/fill-opacity="0.85"/g) || []).length, 7);
+  assert.strictEqual((C.gaugeSvg(true, 62).match(/fill-opacity="0.14"/g) || []).length, 4);
+  // Nothing but the cover and the leading edge is full height (no lines through tab labels).
+  assert.strictEqual((C.gaugeSvg(true, 62).match(/<svg [^>]*height="3"/g) || []).length, 11, "every meter piece is 3px tall");
+  assert.strictEqual((C.gaugeSvg(true, 62).match(/<svg x="62%" overflow="visible">/g) || []).length, 1);
 
   const on = C.buildTheme(state(61), null);
-  assert.deepStrictEqual(on.theme.images.additional_backgrounds, ["gauge/r2-dark-62.svg"]);
-  assert.deepStrictEqual(C.buildTheme(state(61, "battery", false), null).theme.images.additional_backgrounds, ["gauge/r2-light-62.svg"]);
+  assert.deepStrictEqual(on.theme.images.additional_backgrounds, ["gauge/r3-dark-62.svg"]);
+  assert.deepStrictEqual(C.buildTheme(state(61, "battery", false), null).theme.images.additional_backgrounds, ["gauge/r3-light-62.svg"]);
   assert.strictEqual(C.buildTheme(state(0), null).gauge.level, 0);
   assert.strictEqual(C.buildTheme(state(100), null).gauge.level, 100);
+  assert.deepStrictEqual(C.buildTheme(state(61), null, { rtl: true }).theme.images.additional_backgrounds, ["gauge/r3-dark-62.svg#rtl"]);
+  assert.strictEqual(on.theme.properties.backgrounds_area, "top_toolbars");
   const off = C.buildTheme(state(61), { gauge: false });
   assert.strictEqual(off.theme.images, undefined);
   assert.strictEqual(off.gauge, null);
