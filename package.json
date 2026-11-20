@@ -8,7 +8,8 @@
     "start": "npx --yes web-ext@8 run --source-dir extension",
     "sign": "npx --yes web-ext@8 sign --source-dir extension --artifacts-dir web-ext-artifacts --channel unlisted",
     "check": "npm test && npm run lint",
-    "gauge": "node tools/build-gauge.js"
+    "gauge": "node tools/build-gauge.js",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.e2e.js"
   },
   "license": "MIT",
   "repository": {
