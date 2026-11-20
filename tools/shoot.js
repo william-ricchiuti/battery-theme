@@ -49,15 +49,41 @@ const SCENARIOS = {
   "rtl-30": { state: { percentage: 30 }, rtl: true },
   "rtl-8": { state: { percentage: 8 }, rtl: true },
   "newtab-40": { state: { percentage: 40 }, prefs: { "browser.newtabpage.enabled": true }, whole: true, newtab: true },
+  // Store screenshots (docs/screenshots/): whole window, 1280x800 at 2x = 2560x1600.
+  "store-1-healthy-dark": { state: { percentage: 82, minutes_remaining: 372 }, store: true },
+  "store-2-low-dark": { state: { percentage: 20, minutes_remaining: 54 }, store: true },
+  "store-3-critical-dark": { state: { percentage: 8, minutes_remaining: 19 }, store: true },
+  "store-4-charging-dark": { state: { percentage: 46, on_ac: true, charging: true, minutes_remaining: 61 }, store: true },
+  // (5-popup-dark.png is taken by hand: the popup is a separate native panel that a headless capture does not include.)
+  "store-6-low-light": { state: { percentage: 20, minutes_remaining: 54, dark: false }, store: true },
+  "store-7-vertical-dark": { state: { percentage: 34, minutes_remaining: 95 }, store: true, prefs: VERTICAL },
+};
+
+// A quiet new-tab page: no network content, just the search box on the theme's own background.
+const STORE_PREFS = {
+  "browser.newtabpage.enabled": true,
+  "browser.newtabpage.activity-stream.feeds.topsites": false,
+  "browser.newtabpage.activity-stream.feeds.section.topstories": false,
+  "browser.newtabpage.activity-stream.feeds.system.topstories": false,
+  "browser.newtabpage.activity-stream.showSponsored": false,
+  "browser.newtabpage.activity-stream.showSponsoredTopSites": false,
+  "browser.newtabpage.activity-stream.showWeather": false,
+  "browser.newtabpage.activity-stream.feeds.section.highlights": false,
+  "browser.newtabpage.activity-stream.feeds.snippets": false,
+  "browser.newtabpage.activity-stream.newtabWallpapers.enabled": false,
+  "browser.newtabpage.activity-stream.showSearch": true,
+  "browser.newtabpage.activity-stream.logowordmark.alwaysVisible": true,
+  "browser.newtabpage.activity-stream.asrouter.providers.messaging-experiments": "{}",
+  "browser.startup.homepage": "about:home",
 };
 
 async function shoot(name, sc, outDir) {
-  const scale = Number(process.env.SHOOT_SCALE || 1);
+  const scale = Number(process.env.SHOOT_SCALE || (sc.store ? 2 : 1)); // whole-window shots only
+  if (sc.store) sc = { whole: true, newtab: true, height: 800, ...sc, prefs: { ...STORE_PREFS, ...(sc.prefs || {}) } };
   const b = await launch({
     width: sc.width || 1280,
     height: sc.height || (sc.whole ? 520 : 400),
     prefs: {
-      "layout.css.devPixelRatio": String(scale),
       "ui.systemUsesDarkTheme": sc.state.dark === false ? 0 : 1,
       ...(sc.prefs || {}),
     },
@@ -69,7 +95,7 @@ async function shoot(name, sc, outDir) {
     b.setState(sc.state);
     await b.install();
     if (sc.settings) await b.setSettings(sc.settings);
-    await b.client.send("WebDriver:Navigate", { url: sc.newtab ? "about:newtab" : "about:blank" });
+    await b.client.send("WebDriver:Navigate", { url: sc.newtab ? "about:home" : "about:blank" });
     const n = sc.tabs === undefined ? 5 : sc.tabs;
     await b.chrome(`
       const [n, titles] = arguments;
@@ -78,9 +104,12 @@ async function shoot(name, sc, outDir) {
         gBrowser.addTab("data:text/html,<title>" + titles[i % titles.length] + "</title>", { triggeringPrincipal: principal });
       }`, [n, TITLES]);
     await b.waitForTheme((t) => t.lwtheme, "theme", 10000);
-    await sleep(1200);
+    // Automation paints the address bar with warning stripes and a robot
+    // icon; a user never sees those, so take them off for the picture.
+    await b.chrome(`document.documentElement.removeAttribute("remotecontrol");`);
+    await sleep(sc.store ? 4000 : 1500);
     const file = path.join(outDir, `${name}.png`);
-    if (sc.whole) await b.screenshot(file);
+    if (sc.whole) await b.screenshot(file, scale);
     else {
       await b.client.setContext("chrome");
       const el = await b.client.send("WebDriver:FindElement", { using: "id", value: "navigator-toolbox" });

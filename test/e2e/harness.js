@@ -304,14 +304,22 @@ async function launch(opts = {}) {
         }, (e) => done("ERR " + e));`, [points], { async: true });
     },
 
-    async screenshot(file) {
-      await client.setContext("chrome");
-      try {
-        const res = await client.send("WebDriver:TakeScreenshot", { full: true });
-        fs.writeFileSync(file, Buffer.from(res.value, "base64"));
-      } finally {
-        await client.setContext("content");
-      }
+    // Saves a picture of the whole browser window (toolbars included).
+    // scale 2 renders at twice the resolution, like a HiDPI screen.
+    async screenshot(file, scale = 1) {
+      const data = await b.chrome(`
+        const [scale, done] = arguments;
+        const w = window.innerWidth, h = window.innerHeight;
+        window.browsingContext.currentWindowGlobal.drawSnapshot(new DOMRect(0, 0, w, h), scale, "white").then(async (bitmap) => {
+          const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+          canvas.getContext("2d").drawImage(bitmap, 0, 0);
+          const blob = await canvas.convertToBlob({ type: "image/png" });
+          const reader = new FileReader();
+          reader.onload = () => done(reader.result.split(",")[1]);
+          reader.readAsDataURL(blob);
+        }, (e) => done("ERR " + e));`, [scale], { async: true });
+      if (data.startsWith("ERR")) throw new Error(data);
+      fs.writeFileSync(file, Buffer.from(data, "base64"));
       return file;
     },
 
