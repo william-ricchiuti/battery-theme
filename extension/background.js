@@ -239,6 +239,7 @@ const FAILURES_BEFORE_SLOW = 5;
 const STABLE_MS = 30000;          // a port that lived this long counts as healthy
 const QUICK_DEATHS_BEFORE_GIVING_UP = 3;
 const HOLD_MS = 5000;             // how long a suspect helper must stay up before we trust it
+const FIRST_MESSAGE_MS = 8000;    // a helper that has said nothing by now is shown as not connected
 
 let port = null;
 let failures = 0;
@@ -318,12 +319,21 @@ function connect() {
     if (port === p) setQuickDeaths(0);
   }, STABLE_MS);
 
+  // A helper that starts but never sends a reading (hung, or the wrong
+  // program) would otherwise leave the popup on "Connecting…" forever, or an
+  // old reading on screen. The port stays open: if it does speak later, its
+  // reading is shown as usual.
+  const silentTimer = setTimeout(() => {
+    if (port === p && !gotMessage) render({ kind: "no-host" });
+  }, FIRST_MESSAGE_MS);
+
   p.onMessage.addListener((msg) => {
     if (!isValidState(msg)) {
       console.warn("Battery Theme: ignoring unexpected host message:", msg);
       return;
     }
     gotMessage = true;
+    clearTimeout(silentTimer);
     noteSuccess();
     if (quickDeaths < QUICK_DEATHS_BEFORE_GIVING_UP) {
       render(viewFor(msg));
@@ -344,6 +354,7 @@ function connect() {
     if (port === p) port = null;
     clearTimeout(stableTimer);
     clearTimeout(holdTimer);
+    clearTimeout(silentTimer);
     const reason = p.error ? p.error.message : "host exited";
     console.warn("Battery Theme: host disconnected:", reason);
     if (gotMessage && Date.now() - connectedAt > STABLE_MS) {
