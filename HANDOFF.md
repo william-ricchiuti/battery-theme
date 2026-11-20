@@ -2,139 +2,180 @@
 
 ## What this project is
 
-A Firefox WebExtension (Manifest V3) + Native Messaging Host that acts as an **ambient battery indicator**. A native host reads the system battery state and sends it to the extension via native messaging; the extension uses `browser.theme.update()` to dynamically recolor Firefox based on battery percentage and charging state.
+A Firefox WebExtension (Manifest V3) plus a native messaging helper that turns the browser into an **ambient battery indicator**. The helper reads the battery from the operating system and sends it to the extension; the extension recolours Firefox with `browser.theme.update()`.
+
+- **Extension ID (gecko)**: `battery-theme@willy.dev`
+- **Native host name**: `com.williamricchiuti.batterytheme`
+- Neither may change, and the helper message format may only grow in compatible ways: installed helpers must keep working after an extension update.
+- Store promises that tests now enforce (`test/package.test.js`): only the `theme`, `nativeMessaging`, `alarms` and `storage` permissions; no network access; no remote, generated, minified or third-party code.
 
 ## Project structure
 
 ```
-battery-theme/
-├── extension/
-│   ├── manifest.json          # MV3; theme, nativeMessaging, alarms, storage; gecko id
-│   ├── theme-colors.js        # colour model (OKLCH, urgency, light/dark, contrast)
-│   ├── background.js          # connectNative, lifecycle, theme.update, icon + badge
-│   ├── popup.html/.css/.js    # status + settings popup
-│   ├── setup.html/.css/.js    # first-run page shown once when the helper is missing
-│   └── setup-help.js          # install command text shared by popup and setup page
-├── host/
-│   ├── mac/
-│   │   ├── battery-host.sh                        # pmset -g pslog events + 60s heartbeat, emit-on-change
-│   │   ├── install.sh / uninstall.sh               # ~/Library/.../NativeMessagingHosts/
-│   │   └── com.williamricchiuti.batterytheme.json # native messaging manifest template
-│   ├── linux/
-│   │   ├── battery-host.sh                        # sysfs, 5s poll, emit-on-change (tested against a fake sysfs only)
-│   │   └── install.sh / uninstall.sh               # ~/.local/share/battery-theme + ~/.mozilla/native-messaging-hosts
-│   └── windows/
-│       ├── battery-host.ps1                        # Get-CimInstance Win32_Battery, 120s poll
-│       ├── install.bat                             # copies to %LOCALAPPDATA%, .bat wrapper, HKCU reg key
-│       └── com.williamricchiuti.batterytheme.json  # native messaging manifest template
-├── userChrome/
-│   ├── battery-theme.css       # optional: outlines for inactive tabs
-│   ├── install-userchrome.sh   # safe installer: backs up, adds one @import, --uninstall
-│   └── README.md               # setup steps + tweaks
-├── install.sh                  # one entry point: picks mac or linux, --uninstall
-├── preview.html                # every colour state, dark and light
-├── test/                       # node --test: hosts, colour model, installers
-├── docs/amo-listing.md         # store listing text + reviewer notes
-└── HANDOFF.md                  # this file
+extension/
+  manifest.json            MV3; gecko id; strict_min_version 140
+  theme-colors.js          the whole colour model and the gauge drawing (pure functions)
+  background.js            helper connection, lifecycle, theme.update, toolbar icon
+  popup.html/.css/.js      status and settings
+  setup.html/.css/.js      first-run page shown once when the helper is missing
+  setup-help.js            install command text shared by popup and setup page
+  gauge/r6-<level>.svg     51 generated gauge images (npm run gauge)
+host/
+  mac/      battery-host.sh (pmset events + 60s heartbeat), install.sh, uninstall.sh
+  linux/    battery-host.sh (sysfs, 5s poll), install.sh, uninstall.sh
+  windows/  battery-host.ps1 (GetSystemPowerStatus, 5s poll), battery-host.bat, install.bat, uninstall.bat
+userChrome/                optional tab outlines + safe installer
+install.sh                 one entry point for macOS and Linux, also works piped from curl
+test/                      unit tests (node --test)
+test/e2e/                  end-to-end tests that drive a real Firefox
+test/docker/linux.sh       runs everything on Linux in Docker
+tools/                     build-gauge.js, check-zip.js, shoot.js (screenshots)
+docs/amo-listing.md        store listing text and reviewer notes
+docs/ci/github-actions.yml proposed CI, NOT active (see "CI")
+preview.html               every colour state, as a mock-up
 ```
 
-## How it works (v1.7)
+## How it works
 
-1. **Native host (macOS)** — `host/mac/battery-host.sh`. Event-driven: `pmset -g pslog` prints a line on every power-source change, which triggers a state read, so plugging in shows within about a second. A 60s heartbeat re-reads the state to catch Low Power Mode and light/dark changes. It only writes when the state changes and exits when Firefox closes stdin.
-2. **Protocol v1** — 32-bit little-endian length prefix + UTF-8 JSON:
+1. **Helper** reads the battery and writes a message only when the state changes. It exits when Firefox closes its stdin, and also when its parent process disappears.
+2. **Protocol v1**: 32-bit little-endian length, then UTF-8 JSON:
    `{"v":1,"has_battery":true,"percentage":78,"on_ac":false,"charging":false,"charged":false,"minutes_remaining":192,"low_power":false,"dark":true}`
-   `minutes_remaining` is `null` when there is no estimate; a machine with no battery sends `has_battery:false`.
-3. **Extension** — `connectNative`, then `browser.theme.update()`. Three honest views: battery (themed), no battery (user's own theme, "-" icon), helper not connected (user's own theme, "?" icon; the popup shows the install command and a Try again button). It never paints a made-up level.
-4. **Popup** — `popup.html/.css/.js`. Shows percentage, status, time remaining and Low Power Mode, plus the settings. It reads the current view from `storage.session.view` (published by the background on every render), writes `storage.local.settings`, and messages the background (`wake` on open, `retry` on Try again). The percentage badge on the toolbar button is now off by default (`settings.badge`).
-5. **Lifecycle** — the background is an MV3 event page. A 1-minute `watchdog` alarm reconnects after host failures (slowing to 5 minutes after 5 failures in a row), and what is painted is kept in `storage.session` so a wake-up does not repaint an unchanged theme.
+   `minutes_remaining` and `dark` may be `null`. A machine with no battery sends `has_battery:false` and `percentage:null`.
+3. **Extension** connects with `connectNative` and paints with `theme.update`. Views: battery (themed), no battery ("-" on the button, user's own theme), helper not connected ("?"), helper too old ("!"). It never paints a made-up level.
+4. **Popup** reads the current view from `storage.session.view` (published by the background on every render) and writes `storage.local.settings`.
+5. **Lifecycle**: MV3 event page. A 1-minute `watchdog` alarm reconnects after a helper failure (5 minutes after 5 failures in a row). What is painted is kept in `storage.session`, so a wake-up does not repaint an unchanged theme.
 
-### The gauge (v1.7, redrawn in v1.8)
+### Helper failure handling (all covered by end-to-end tests)
 
-- With `settings.gauge` on (default), the strip is tinted with the battery colour at no less than 20% strength and a packaged "cover" SVG (`extension/gauge/<rev>-<dark|light>-<level>.svg`, via `images.additional_backgrounds`) paints the neutral strip colour over everything to the right of the charge level. Since v1.8 it also draws ten battery cells (2px gaps in the filled part, faint ghost lines in the empty part), a glow toward the level and a bright 2px leading edge.
-- **Bump `GAUGE_REV` whenever `gaugeSvg()` changes.** Firefox keeps theme images cached across an extension reload/update, so a changed file under an unchanged name keeps showing the old picture (seen live on Firefox 160).
-- **Theme images do not animate.** A SMIL charging sweep was tried in v1.8 and froze on one frame, so the images are static. Motion has to come from `theme.update` calls (the 20%/10% flash does that).
-- Why files: Firefox 160 rejects SVG data URLs in `theme.update` (only PNG/JPEG data or packaged relative URLs pass), and there is no window-resize event (`windows.onBoundsChanged` is undefined), so a generated fixed-size PNG could not follow the window. A packaged SVG with no intrinsic size and percentage geometry scales by itself.
-- Levels are quantised to `THEME_STEP` (2%), so 51 levels x 2 appearances = 102 files, generated by `npm run gauge` from `gaugeSvg()`; a test fails if they are stale.
-- The image covers only the tab strip. With vertical tabs it shows on the top bar instead and the sidebar is tinted whole.
-- Text and active-tab contrast are checked against both the filled and the empty strip colour.
+- Missing, exits at once, or sends garbage: "not connected".
+- **Starts but never sends anything**: "not connected" after 8 seconds (`FIRST_MESSAGE_MS`). Before 1.9 this left the popup on "Connecting…" forever.
+- Sends a reading then dies within 30s, three times in a row: treated as missing; its next readings are held 5s before being trusted.
+- `v` below `MIN_HELPER_VERSION`: "update the helper" notice.
+- Invalid readings (percentage out of range, not an integer, wrong types) are ignored and the last good theme stays.
 
-### Behaviours added in v1.5.1 - v1.6
+## The gauge (redrawn in 1.9, `GAUGE_REV` r6)
 
-- **Repaint guard.** Firefox's default theme can overwrite the first paint at browser start. The background repaints on any `theme.onUpdated` it did not cause (max 3 per minute) and once 4s after the first paint of a session.
-- **Pause.** `settings.enabled = false` resets the theme and stops reclaiming it; the button and popup still show the reading.
-- **Crash-looping helper.** A helper that sends a reading and dies within 30s three times in a row is treated as missing (no stale reading left on screen); its next readings are held for 5s before being trusted.
-- **Helper version.** A helper whose `v` is below `MIN_HELPER_VERSION` (background.js) shows an "update the helper" notice instead of a reading. Bump both sides together when the message format changes.
-- **Setup page.** Opened once on install if the first connection finds no helper.
-- **Active tab.** `tab_selected` is lifted until it has at least 1.25:1 contrast against the strip (tested).
-- **Install.** `install.sh` also works piped from `curl`: with no project files beside it, it downloads `host/<os>/{battery-host,install,uninstall}.sh` from `BATTERY_THEME_BASE_URL` (default: `main` on GitHub).
+Two parts, both in the generated image (`gaugeSvg` in `theme-colors.js`):
 
-### Facts checked on Firefox 160 (2026-11-16, headless, temporary add-on)
+1. **The fill.** The theme's `frame` colour tints the strip (at least 20% strength), and the image covers everything past the charge level with the neutral strip colour. A glow and a bright 2px edge mark the level.
+2. **The meter line.** A 3px line along the very top edge of the window, cut into ten cells, bright up to the level and faint beyond. Tabs never reach the top few pixels, so the level stays readable when the fill is short enough to hide behind the active tab (below about 20% on a normal window).
 
-- `navigator.getBattery` is `undefined` in an extension background page, so the native host is required.
-- An open native port with no traffic kept the event page and host alive for 140s+ (no suspend at 30s). The watchdog alarm stays as a backstop.
+Why it changed: real-window screenshots showed the 1.8 full-height cell dividers running through tab labels, the gauge vanishing behind the active tab at low levels, and a stripe down the sidebar with vertical tabs.
 
-### Tests and tooling
+Facts that govern it, all checked in real Firefox:
 
-- `npm test` — host tests against a fake `pmset` (state parsing, framing, plug-in event, clean exit) and colour-model tests (contrast, escalation, palettes) and installer tests against a throwaway HOME. `npm run check` runs tests + lint.
-- `npm run lint` / `npm run build` — web-ext.
-- `npm run sign` — unlisted AMO signing so the add-on survives restarts; needs `WEB_EXT_API_KEY` and `WEB_EXT_API_SECRET` from an AMO account.
+- **One file per level** (51 files, 2% steps). Dark is the plain file; light, right-to-left and light right-to-left are the same file with `#l`, `#r` or `#lr` after the name. The fragment switches CSS variables or mirrors the drawing through `:target` rules inside the SVG. Verified by reading rendered pixels on Firefox 140, 153 ESR, 160 and 161.
+- **`backgrounds_area: "top_toolbars"`** keeps the image on the top toolbars. Firefox 157+ otherwise stretches theme images over the whole window, where they show through the vertical-tabs sidebar. Firefox 140 ignores the property without error and already keeps the image in the toolbox.
+- **Bump `GAUGE_REV` whenever `gaugeSvg()` changes.** Firefox caches theme images across an extension update, so a changed file under an unchanged name keeps showing the old picture.
+- **Theme images do not animate** (a SMIL sweep froze on one frame in 1.8). Motion comes from `theme.update` calls only.
+- **Theme images must be packaged files.** Firefox rejects SVG data URLs in `theme.update`.
+- With vertical tabs the gauge sits in the top bar and the sidebar takes the tint colour as a whole.
+- Text contrast is checked against both the filled and the empty strip colour. Icon colour is chosen the same way (3:1 minimum on the toolbar and both strip colours); before 1.9 it could fall to 2.35:1.
 
-## The tab-border constraint (important context)
+## Light and dark (changed in 1.9)
 
-The goal was for inactive tabs to have **borders and separation** instead of melting into the tab strip. Three findings govern what's possible on release Firefox 160 (Nova):
+With Appearance on "Match system" the theme is applied with `color_scheme: "system"`. The background page then sees Firefox's own view of the OS setting through `prefers-color-scheme`, and uses that. This works on every OS, including where the helper sends `dark:null`.
 
-- `tab_background_separator` — the only standard theme property that drew a line between tabs — was **removed in Firefox 89**.
-- `theme_experiment` (the extension mechanism for custom chrome CSS) is **Developer Edition / Nightly only** and needs `extensions.experiments.enabled`. That's why every `theme_experiment` attempt reverted the theme to default: it isn't available on this channel.
-- In Nova the selected tab has **no drop shadow**, so the active tab must be separated by color contrast alone (`tab_selected` vs `frame`).
+- Verified on Firefox 140 and 160: the background page follows the theme's `color_scheme`, not `content_color_scheme`. `privacy.resistFingerprinting` does not affect it.
+- **Firefox 157+** delivers the change event, so an OS switch shows at once. **Firefox 140 does not**, and a kept `MediaQueryList` goes stale there, so the code asks afresh each time; on 140 the switch shows with the next helper message or when the popup opens.
+- The query only means "the system" while our own system-following theme is applied. Until then the helper's `dark` is the first guess. When another theme replaces ours, the query flips for that reason; the code checks `theme.getCurrent()` and does not react.
+- A forced appearance (Dark or Light) names the scheme outright.
 
-**Conclusion**: the theme API cannot border inactive tabs. The solution is a hybrid:
+## Colour model
 
-1. **Extension** (dynamic battery colors) — the polished dark theme below, with the battery gradient on the tab strip + active tab + URL-bar border.
-2. **`userChrome.css`** (optional, one-time) — real borders/darker inactive tabs. This is the only way to get actual tab shapes on release Firefox. See `userChrome/README.md`.
+All in `extension/theme-colors.js`; `preview.html` shows every state.
 
-## Current theme design (v1.3)
+- **Two styles** (`settings.style`): `vivid` (default) shows colour at every level; `subtle` stays near neutral above 50%.
+- **Urgency** rises 0 to 1 between 50% and 10% and drives both hue and how much surface is tinted.
+- **Charging is blue.** Plugged in but not charging shows the healthy colour.
+- **OKLCH/OKLab** stops and blending. **WCAG-measured** text (4.5:1) and icons (3:1).
+- **Flash** at 20% and 10% (`settings.motion`), skipped under the OS reduce-motion setting.
+- **Settings** in `storage.local.settings`: `palette` (`classic` | `cvd`), `intensity` (0-2), `appearance` (`auto` | `dark` | `light`), `badge`, `enabled`, `gauge`, `style`, `motion`.
+- **Colour-blind check**: `test/colour-vision.test.js` simulates protanopia, deuteranopia and tritanopia. The `cvd` palette keeps full, low and charging apart under all three. The classic palette does not keep charging-blue apart from healthy-green under tritanopia (0.03 OKLab), so tritan users should use the colour-blind palette.
 
-All colour logic is in `extension/theme-colors.js` (pure functions, shared by the background page, the tests and `preview.html`). Open `preview.html` in a browser to see every state in dark and light; `?palette=cvd` presets the colour-blind palette.
+## Helpers
 
-- **Two styles (`settings.style`).** `vivid` (default since v1.8): the strip is tinted ~30% and the active tab is a solid accent card at every level, the line under the toolbar and the sidebar border carry the accent, and the new-tab page and sidebar get a light tint; urgency adds to all of it. `subtle` is the pre-1.8 behaviour, described in the next point.
-- **Quiet when healthy (`subtle`, gauge off).** At 50% and above the chrome is near-neutral: a ~7% tint on the tab strip, accent only on the tab line, URL-bar border and attention icons.
-- **Flash (`settings.motion`).** When an on-battery reading drops through 20% or 10% (`crossesPulse`), the background paints `buildTheme(..., { pulse: true })` for 900ms, then the normal theme. Skipped under the OS reduce-motion setting.
-- **Escalates with urgency.** `urgency` goes 0 → 1 between 50% and 10% (smoothstep). It drives both the hue and how much surface is tinted: strip, then active tab, then toolbar and new-tab page. At 10% the active tab is a solid red card.
-- **Charging is blue**, at any level, so "plugged in" never looks like "full". Plugged in but not charging (full, or held at 80%) shows the healthy colour.
-- **OKLCH.** Accent stops are defined in OKLCH and surfaces are blended in OKLab, so there is no olive between green and red.
-- **Light and dark** follow the OS via the host's `dark` field (unknown = dark).
-- **Contrast is measured.** Every text colour is picked by WCAG ratio; mid-tone surfaces are nudged until they clear 4.5:1. Tests sweep every percentage, mode, palette and intensity.
-- **Settings** live in `storage.local` under `settings`: `palette` (`classic` | `cvd`), `intensity` (0-2, default 1), `appearance` (`auto` | `dark` | `light`), `badge` (boolean, default off), `enabled` (boolean, default on), `gauge` (boolean, default on), `style` (`vivid` | `subtle`, default `vivid`), `motion` (boolean, default on). The popup edits them; the background re-renders when the key changes.
-- `userChrome/battery-theme.css` (optional) outlines inactive tabs using colours mixed from the tab text colour, so it follows light/dark and the battery tint.
+| | macOS | Linux | Windows |
+| --- | --- | --- | --- |
+| Source | `pmset -g batt` | `/sys/class/power_supply` | `GetSystemPowerStatus` |
+| Reacts in | about 1s (pslog events) | up to 5s | up to 5s |
+| Light/dark sent | yes | GNOME only; `null` in Flatpak | yes (registry) |
+| Low power | yes | `powerprofilesctl` | Battery Saver |
+| Run for real | yes, this Mac | under real Linux Firefox in Docker, fake battery | **never** |
 
-## Performance (deliberately low-impact)
+- **Linux**: several batteries are weighted by capacity. Peripheral batteries are skipped by `scope=Device`, or by driver name when `scope` is missing (`hid-*`, `hidpp_battery_*`, `wacom_*`, game controllers). A `type=UPS` supply is not a battery. The poll waits with a shell builtin, not a `sleep` process.
+- **Flatpak Firefox** starts the helper inside its sandbox from `~/.var/app/org.mozilla.firefox/.mozilla/native-messaging-hosts/`; `install.sh` puts a second copy there when it finds one. No sandbox permission is changed. Run for real with Flathub Firefox 160 in Docker.
+- **Snap Firefox** cannot start a helper itself; the desktop portal starts it from the regular location. `install.sh` only prints guidance. Not tested: snapd would not run in Docker.
+- **Windows**: a failed read is no longer reported as "no battery"; after five in a row the helper exits so the extension shows "not connected". `charged` means 100%, on mains, not charging. The manifest uses a path relative to itself. Logic is tested under PowerShell 7 on Linux; nothing has run on Windows.
+- **macOS UPS**: a desktop on a UPS reports no battery (tested against canned `pmset` output).
 
-- Host blocks on `pmset -g pslog` events plus a **60s** heartbeat and **only emits when state changes**, so a steady battery sends nothing.
-- Extension skips all work when the reading is unchanged, and quantizes `theme.update()` to **2% steps** (theme repaint is the expensive part — a full chrome repaint). Icon/badge update on every real change.
-- No content scripts, no page observers; the popup only runs while open. The only ongoing work is one native-messaging socket and a sleeping host loop.
+### Host gotchas
 
-## IDs
+- Under Firefox, the helper's main process must read stdin in the **foreground** (`cat >/dev/null`), with the work loop in a background subshell. The reverse gets an immediate EOF when launched by Firefox.
+- On macOS, a process started by Firefox may not execute files in privacy-protected folders such as `~/Desktop` ("Operation not permitted"). The tests copy the fake `pmset` to a temp folder for that reason.
 
-- **Extension ID (gecko)**: `battery-theme@willy.dev`
-- **Native host name**: `com.williamricchiuti.batterytheme`
+## Tests and tooling
 
-## How to test
+| Command | What it runs |
+| --- | --- |
+| `npm test` | 97 unit tests: helpers against fake batteries, installers against throwaway homes, colour model, snapshot, colour-blind simulation, package promises. Windows helper tests need Docker or PowerShell and skip without. |
+| `npm run test:e2e` | 21 end-to-end tests in a real Firefox (`FIREFOX_BIN` picks the build). |
+| `npm run check` | `npm test` + web-ext lint + `check:zip`. |
+| `npm run check:zip` | Builds the store zip and checks it holds exactly `extension/`. |
+| `npm run check:shell` | shellcheck + `bash -n` with the stock bash. |
+| `npm run check:all` | All of the above. |
+| `npm run test:linux` | Unit and end-to-end tests on Linux in Docker (`release` argument for the current Firefox). |
+| `npm run gauge` | Regenerates `extension/gauge/`. |
+| `node tools/shoot.js <dir> [scenario…]` | Real-window screenshots in any battery state. |
+| `UPDATE_SNAPSHOT=1 node --test test/snapshot.test.js` | Accept an intended colour change. |
 
-1. Reinstall the native host after any change to it: `bash install.sh`
-2. Load the extension: `about:debugging#/runtime/this-firefox` → "Load Temporary Add-on" → `extension/manifest.json`
-3. (Optional) Install the tab borders: `bash userChrome/install-userchrome.sh` + the `about:config` pref + restart.
-4. Browser Console (Cmd+Shift+J) shows any errors. Theme reflects battery; icon/badge show the exact %.
-5. Quick host check: `bash host/mac/battery-host.sh --json` prints the current state; `--once | xxd` shows the framed message.
+How the end-to-end tests work (`test/e2e/harness.js`): a dependency-free Marionette client starts Firefox on a throwaway profile **and a throwaway home folder** (`HOME` plus `CFFIXED_USER_HOME` on macOS), so Firefox finds only the native-messaging manifest the test wrote. The real profile and the really installed helper are never touched. Assertions read CSS variables and computed colours from the browser window itself, and `pixels()` reads rendered pixels. `fake-host.js` is a helper the test steers through files.
 
-## Environment
+Right-to-left needs Mozilla's Arabic language pack for the exact Firefox version: `BATTERY_E2E_RTL_LANGPACK=/path/to/ar.xpi`.
 
-- Firefox 160.0 (Nova-based; Firefox 157+ theme properties apply)
-- macOS (host tested on this machine)
-- `pmset -g batt` returns e.g. `78%; discharging`
+### What has been run where (2026-11-20)
+
+| Firefox | Result |
+| --- | --- |
+| 160.0 release, macOS | 21/21 |
+| 161.0b4 Developer Edition, macOS | pass (RTL skipped) |
+| 140.0 ESR, macOS | pass, incl. RTL (vertical-tabs test skipped by design) |
+| 153.7 ESR, Debian in Docker | pass with the real Linux helper |
+| 160.0.1 release, Debian in Docker | pass with the real Linux helper |
+| 160.0.1 Flatpak, Debian in Docker | helper starts and themes (manual experiment, not in the suite) |
+| Any Firefox on Windows | **never run** |
+| Snap Firefox | **never run** |
+
+## CI
+
+`docs/ci/github-actions.yml` is a proposal. GitHub does not run it from there. To turn it on, copy it to `.github/workflows/ci.yml` and push. Its Windows job would be the first real run of the Windows helper, `install.bat`, `uninstall.bat` and `test/e2e/windows-helper.e2e.js`; expect to fix things on that first run.
+
+## Performance (measured 2026-11-20, this Mac unless noted)
+
+| | 1.8.1 | 1.9.0 |
+| --- | --- | --- |
+| Store zip | 62,176 bytes, 116 files | 55,000 bytes, 63 files |
+| macOS helper, idle | 0.21 CPU-seconds per 5 minutes | same (unchanged) |
+| Linux helper, idle (Docker) | 0.37 CPU-seconds per 5 minutes | 0.29 |
+| Theme repaints | 106 per full discharge + recharge | same |
+| Firefox idle CPU with the extension | no measurable difference from without it (2.0-2.8 CPU-seconds per minute either way) | same |
+
+A steady battery sends nothing and repaints nothing; a 2% step costs exactly one repaint (end-to-end tested).
+
+## The tab-border constraint
+
+On release Firefox an extension cannot outline or separately colour inactive tabs: `tab_background_separator` was removed in Firefox 89, `theme_experiment` is Developer Edition and Nightly only, and since Nova (157) the selected tab has no shadow. Real outlines come from the optional `userChrome/battery-theme.css`.
+
+`userChrome/install-userchrome.sh` picks the profile named by the `[Install…]` section of `profiles.ini`. On current Firefox the profile marked `Default=1` is usually an old unused one, which the pre-1.9 installer would have chosen. With Firefox and Developer Edition both installed it asks, or takes `--all`.
 
 ## Open items
 
-- Tab-outline selectors were checked against Firefox 160's bundled `tabs.css` (`.tabbrowser-tab > .tab-stack > .tab-background`, `[selected]`, `[multiselected]`), but the result has not been looked at in a real profile.
-- Windows host was updated to protocol v1 but has **never been run** (no Windows machine); it still polls every 120s.
-- Colours have only been reviewed in `preview.html` mock-ups, not in the real Firefox chrome. Stops are in `PALETTES` at the top of `theme-colors.js`.
-- Windows host sends `dark:null`, so Windows always gets dark chrome unless `appearance` is set.
+- **Windows** is unverified end to end. See "CI".
+- **Snap** is unverified.
+- A real Linux laptop battery, a real UPS and real multi-battery hardware have not been seen; only simulated sysfs trees.
+- KDE, Xfce and other desktops: light/dark now comes from Firefox itself, which was verified on macOS and headless Linux only.
+- Real sleep/wake and a real unplug were simulated (frozen processes, fake `pmset` events).
+- Forced-colours / Windows high-contrast mode has not been looked at.
+- The popup store screenshot (`docs/screenshots/5-popup-dark.png`) still shows the 1.8 gauge behind the popup; a headless capture cannot include the popup panel.
+- How the optional tab outlines look in a real profile has still not been reviewed.
+- `preview.html` is a mock-up and does not draw the meter line.

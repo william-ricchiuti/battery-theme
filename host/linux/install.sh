@@ -73,8 +73,8 @@ if has_flatpak_firefox; then
     echo "  Manifest: $FLATPAK_DIR/$NAME.json"
     echo "  The helper runs inside Firefox's sandbox. It can read the battery"
     echo "  there, and no Flatpak permission was changed or is needed. It cannot"
-    echo "  see the desktop's dark-mode or power-saver setting from in there, so"
-    echo "  set Appearance in the Battery Theme popup if the colours look wrong."
+    echo "  see the desktop's power-saver setting from in there; light and dark"
+    echo "  still follow the system, because Firefox itself reports that."
 fi
 
 if has_snap_firefox; then

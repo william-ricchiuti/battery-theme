@@ -7,7 +7,7 @@ Firefox's theme API gives extensions colours only, so the extension cannot outli
 
 `battery-theme.css` adds a faint fill and a 1px outline to inactive tabs through Firefox's `userChrome.css` mechanism. Its colours are mixed from the tab text colour, so it follows the theme in both light and dark.
 
-## Install (macOS)
+## Install (macOS and Linux)
 
 ```sh
 bash userChrome/install-userchrome.sh
@@ -24,7 +24,11 @@ What the installer does:
 - Adds `@import "battery-theme.css";` as the first line of `chrome/userChrome.css`, creating that file if needed.
 - If you already have a `userChrome.css`, it is backed up first (`userChrome.css.backup-<timestamp>`) and its contents are kept.
 
-Options: `--list` shows the profiles it found, `--profile <dir>` picks one (needed when several exist and none is marked default; `about:support` → Profile Folder shows the one in use), `--uninstall` removes the import line and the stylesheet.
+Which profile: the one your installed Firefox starts with (the `[Install…]` entry in `profiles.ini`), not the one marked `Default=1`, which on current Firefox is usually an old unused profile. If more than one Firefox is installed (for example Firefox and Developer Edition) the installer stops and lists them.
+
+Options: `--list` shows the profiles it found, `--all` installs into the profile of every installed Firefox, `--profile <dir>` picks one (`about:support` → Profile Folder shows the one in use), `--uninstall` removes the import line and the stylesheet (with `--all` or `--profile` as for installing).
+
+On Linux it looks in `~/.mozilla/firefox`, then the Snap and Flatpak locations. The Linux paths are covered by tests against made-up profile folders only.
 
 ## Manual install
 

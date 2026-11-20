@@ -361,7 +361,8 @@ test("the gauge as actually drawn: fill, cover and meter line, in dark, light an
       await b.waitForTheme((t) => t.frame === rgb(want.raw.frame) && t.gauge && t.gauge.variant === (dark ? "" : "l"), `40% ${dark ? "dark" : "light"}`);
       await sleep(600);
       const [fill, cover, lit, faint, justInside, justOutside] =
-        await b.pixels([["3%", 14], ["80%", 14], ["3%", 1], ["80%", 1], ["39%", 30], ["41%", 30]]);
+        // 36% is inside the fill and clear of the one open tab, which sits at the far left.
+        await b.pixels([["36%", 14], ["80%", 14], ["36%", 1], ["80%", 1], ["39%", 30], ["41%", 30]]);
       const mode = dark ? "dark" : "light";
       assert.ok(near(fill, want.raw.frame), `${mode}: filled part shows the tinted strip, got ${fill}`);
       assert.ok(near(cover, want.gauge.empty), `${mode}: the rest is the neutral strip, got ${cover}`);
