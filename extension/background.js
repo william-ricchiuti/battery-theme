@@ -140,10 +140,13 @@ const darkQuery = globalThis.matchMedia ? matchMedia("(prefers-color-scheme: dar
 let helperDark = null;        // last `dark` from the helper (null = it cannot tell)
 let followingSystem = false;  // our theme with color_scheme "system" is applied
 let paintedFrame = null;      // frame colour of our last paint, to recognise our own theme
+// Asked afresh every time: on Firefox 140 a kept MediaQueryList goes stale in
+// this (never displayed) page, while a new query gives the current answer.
+const systemIsDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
 function resolvedDark() {
-  if (darkQuery && followingSystem) return darkQuery.matches;
+  if (darkQuery && followingSystem) return systemIsDark();
   if (helperDark !== null) return helperDark;
-  return darkQuery ? darkQuery.matches : null;
+  return darkQuery ? systemIsDark() : null;
 }
 // The state as it is drawn: the helper's reading with light/dark resolved.
 function shown(state) {
@@ -436,7 +439,14 @@ browser.alarms.onAlarm.addListener((alarm) => {
 
 // The popup pings on open (waking this page if needed) and on "Try again".
 browser.runtime.onMessage.addListener((msg) => {
-  if (msg && (msg.type === "wake" || msg.type === "retry")) ready.then(connect);
+  if (!msg || (msg.type !== "wake" && msg.type !== "retry")) return;
+  ready.then(() => {
+    connect();
+    // Firefox 140 does not deliver the prefers-color-scheme change event to
+    // this page (160 does), so there an OS light/dark switch is picked up on
+    // the next helper message, or here when the popup opens.
+    if (lastView) render(lastView);
+  });
 });
 
 // Registering these makes Firefox start the event page on launch / update.
