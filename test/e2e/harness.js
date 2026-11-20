@@ -75,6 +75,7 @@ const BASE_PREFS = {
   "extensions.update.enabled": false,
   "remote.prefs.recommended": true,
   "ui.prefersReducedMotion": 0,
+  "ui.systemUsesDarkTheme": 1, // tests assume a dark system unless they say otherwise
   "termsofuse.bypassNotification": true,
   "browser.uitour.enabled": false,
 };

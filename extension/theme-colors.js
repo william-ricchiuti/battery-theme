@@ -505,11 +505,13 @@
     const colors = {};
     for (const key of Object.keys(raw)) colors[key] = css(raw[key]);
 
-    const theme = { colors, properties: { color_scheme: dark ? "dark" : "light" } };
-    // Following the OS: say so for web content too. Pages then keep the
-    // system light/dark setting (as they did before), and the background
-    // page can watch that setting through prefers-color-scheme.
-    if (settings.appearance === "auto") theme.properties.content_color_scheme = "system";
+    // "system" when following the OS: the colours above are the ones for the
+    // current OS appearance either way, and it lets the background page
+    // watch the OS setting through prefers-color-scheme (see background.js).
+    const theme = {
+      colors,
+      properties: { color_scheme: settings.appearance === "auto" ? "system" : dark ? "dark" : "light" },
+    };
     let gauge = null;
     if (settings.gauge) {
       gauge = { level: quantize(state.percentage), empty: B.frame };

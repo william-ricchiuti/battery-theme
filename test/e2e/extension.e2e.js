@@ -23,7 +23,7 @@ async function withBrowser(opts, fn) {
 }
 
 test("a battery reading themes the real browser window", { skip }, async () => {
-  await withBrowser({ install: false }, async (b) => {
+  await withBrowser({ install: false, prefs: { "ui.systemUsesDarkTheme": 1 } }, async (b) => {
     const state = b.setState({ percentage: 42 });
     await b.install();
     const want = expected(state);
@@ -33,11 +33,13 @@ test("a battery reading themes the real browser window", { skip }, async () => {
     assert.strictEqual(t.paintedSelectedTab, rgb(want.raw.tab_selected), "selected tab colour as painted");
     assert.strictEqual(t.field, rgb(want.raw.toolbar_field));
 
-    // Light appearance from the helper.
+    // The system switches to light.
+    await b.setPref("ui.systemUsesDarkTheme", 0);
     const light = b.setState({ percentage: 42, dark: false });
     const wantLight = expected(light);
     const tl = await b.waitForTheme((t) => t.frame === rgb(wantLight.raw.frame), "light frame");
     assert.match(tl.images, /light-42/);
+    await b.setPref("ui.systemUsesDarkTheme", 1);
 
     // Charging is blue and keeps the gauge at the real level.
     const charging = b.setState({ percentage: 42, on_ac: true, charging: true });
@@ -246,4 +248,89 @@ test("closing Firefox ends the helper", { skip }, async () => {
     fs.rmSync(b.tmp, { recursive: true, force: true });
   } catch {}
   assert.match(log, /stdin-closed/, "helper saw its stdin close");
+});
+
+test("light/dark follows the OS at once, even when the helper cannot tell", { skip }, async () => {
+  await withBrowser({ install: false, prefs: { "ui.systemUsesDarkTheme": 1 } }, async (b) => {
+    const s = b.setState({ percentage: 70, dark: null }); // e.g. Windows or KDE
+    await b.install();
+    const dark = rgb(expected({ ...s, dark: true }).raw.frame);
+    const light = rgb(expected({ ...s, dark: false }).raw.frame);
+    await b.waitForTheme((t) => t.frame === dark, "dark from the OS setting");
+    await b.setPref("ui.systemUsesDarkTheme", 0);
+    const t = await b.waitForTheme((t) => t.frame === light, "light right after the OS switched", 4000);
+    assert.match(t.images, /light-70/);
+    await b.setPref("ui.systemUsesDarkTheme", 1);
+    await b.waitForTheme((t) => t.frame === dark, "dark again", 4000);
+    // The popup draws the same appearance.
+    assert.strictEqual((await b.session()).view.state.dark, true);
+  });
+  // The helper's value is only the first guess: when it is wrong (here it
+  // says dark on a light system), Firefox's own view corrects it.
+  await withBrowser({ install: false, prefs: { "ui.systemUsesDarkTheme": 0 } }, async (b) => {
+    const s = b.setState({ percentage: 70, dark: true });
+    await b.install();
+    await b.waitForTheme((t) => t.frame === rgb(expected({ ...s, dark: false }).raw.frame), "settles on light");
+  });
+  // Forced appearance ignores both.
+  await withBrowser({ prefs: { "ui.systemUsesDarkTheme": 0 } }, async (b) => {
+    const s = b.setState({ percentage: 70, dark: false });
+    await b.setSettings({ appearance: "dark" });
+    await b.waitForTheme((t) => t.frame === rgb(expected(s, { appearance: "dark" }).raw.frame), "forced dark");
+  });
+});
+
+test("vertical tabs: the gauge stays in the top bar", { skip }, async (t) => {
+  const { firefoxVersion } = require("./harness.js");
+  if (firefoxVersion().major < 157) return t.skip("backgrounds_area needs Firefox 157+; older versions already keep the image in the toolbox");
+  await withBrowser({ prefs: { "sidebar.revamp": true, "sidebar.verticalTabs": true } }, async (b) => {
+    b.setState({ percentage: 30 });
+    await b.waitForTheme((t) => t.images.includes("dark-30"), "gauge");
+    const where = await b.chrome(`
+      const cs = (el) => getComputedStyle(el).backgroundImage;
+      return { toolbox: cs(document.getElementById("navigator-toolbox")), body: cs(document.body) };`);
+    assert.match(where.toolbox, /gauge/);
+    assert.strictEqual(where.body, "none", "nothing painted over the whole window");
+  });
+});
+
+test("right-to-left Firefox mirrors the gauge", { skip }, async (t) => {
+  const langpack = process.env.BATTERY_E2E_RTL_LANGPACK;
+  if (!langpack) return t.skip("set BATTERY_E2E_RTL_LANGPACK to Mozilla's ar.xpi for this Firefox version");
+  await withBrowser({ install: false, langpack: { path: langpack, locale: "ar" } }, async (b) => {
+    b.setState({ percentage: 30 });
+    await b.install();
+    const th = await b.waitForTheme((t) => t.images.includes("dark-30"), "gauge");
+    assert.match(th.images, /#rtl|\\#rtl/, "mirrored variant requested");
+    assert.strictEqual(await b.chrome(`return document.documentElement.matches(":-moz-locale-dir(rtl)");`), true);
+  });
+});
+
+test("another add-on that keeps changing the theme is not fought forever", { skip }, async () => {
+  await withBrowser({}, async (b) => {
+    const s = b.setState({ percentage: 70 });
+    const want = rgb(expected(s).raw.frame);
+    await b.waitForTheme((t) => t.frame === want, "70%");
+    // Something else re-applies a theme every 300ms for 6 seconds, while we
+    // sample the window and count how often our colours come back.
+    const takeovers = await b.chrome(`
+      const [want, done] = arguments;
+      const { AddonManager } = ChromeUtils.importESModule("resource://gre/modules/AddonManager.sys.mjs");
+      const ids = ["firefox-compact-light@mozilla.org", "firefox-compact-dark@mozilla.org"];
+      const frame = () => getComputedStyle(document.documentElement).getPropertyValue("--lwt-accent-color").trim();
+      let n = 0, ours = true, count = 0;
+      const sample = setInterval(() => {
+        const now = frame() === want;
+        if (now && !ours) count++;
+        ours = now;
+      }, 25);
+      const tick = async () => {
+        const a = await AddonManager.getAddonByID(ids[n % 2]);
+        await a.enable();
+        if (++n < 20) setTimeout(tick, 300);
+        else setTimeout(() => { clearInterval(sample); done(count); }, 1500);
+      };
+      tick();`, [want], { async: true });
+    assert.ok(takeovers <= 4, `we repaint over the other theme a few times, then stop: ${takeovers}`);
+  });
 });

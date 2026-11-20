@@ -122,28 +122,27 @@ let bootRepaintPending = false;
 const MAX_REPAINTS_PER_MINUTE = 3;
 const BOOT_REPAINT_MS = 4000;
 
-// Light or dark. Two sources:
-//   - the helper's `dark` field (null when it cannot tell: Windows helpers
-//     before 1.9, Linux desktops other than GNOME, Flatpak);
-//   - this page's own prefers-color-scheme. Our theme asks Firefox to keep
-//     web content on the system setting (content_color_scheme "system", see
-//     theme-colors.js), so this follows the OS at once, on every platform.
-// Whichever changed last wins, and the helper wins a tie. That way an OS
-// switch shows immediately even though the helper only re-reads the setting
-// once a minute, and a browser that hides the setting from pages
-// (resistFingerprinting reports "light" forever) still follows the helper.
+// Light or dark, when the Appearance setting is "Match system".
+//
+// The theme is applied with color_scheme "system" (see theme-colors.js), and
+// this background page then sees the browser's own idea of the system
+// setting through prefers-color-scheme (checked on Firefox 140 and 160; it
+// is not affected by resistFingerprinting). That is immediate and works on
+// every OS, including where the helper cannot tell (it sends dark:null on
+// KDE, Xfce, Flatpak and older Windows helpers).
+//
+// The query only means "the system" while our own system-following theme is
+// the one applied; under the user's own theme it reports that theme instead.
+// So until our theme is up, the helper's `dark` field is the first guess,
+// and if that guess was wrong the query changes right after the first paint
+// and the theme is painted again.
 const darkQuery = globalThis.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
-let helperDark = null; // last `dark` from the helper
-let helperDarkAt = 0;
-let osDarkAt = 0;
-function noteHelperDark(value) {
-  const dark = typeof value === "boolean" ? value : null;
-  if (dark === helperDark) return;
-  helperDark = dark;
-  helperDarkAt = Date.now();
-}
+let helperDark = null;        // last `dark` from the helper (null = it cannot tell)
+let followingSystem = false;  // our theme with color_scheme "system" is applied
+let paintedFrame = null;      // frame colour of our last paint, to recognise our own theme
 function resolvedDark() {
-  if (helperDark !== null && (!darkQuery || helperDarkAt >= osDarkAt)) return helperDark;
+  if (darkQuery && followingSystem) return darkQuery.matches;
+  if (helperDark !== null) return helperDark;
   return darkQuery ? darkQuery.matches : null;
 }
 // The state as it is drawn: the helper's reading with light/dark resolved.
@@ -167,9 +166,14 @@ function paintTheme(view, opts) {
   clearTimeout(ownUpdatesTimer);
   ownUpdatesTimer = setTimeout(() => (ownUpdates = 0), 2000); // some calls produce no event
   if (view.kind === "battery") {
-    browser.theme.update(Colors.buildTheme(shown(view.state), paintSettings(), { ...opts, rtl: RTL }).theme);
+    const { theme } = Colors.buildTheme(shown(view.state), paintSettings(), { ...opts, rtl: RTL });
+    browser.theme.update(theme);
+    followingSystem = settings.appearance === "auto";
+    paintedFrame = theme.colors.frame;
+  } else {
+    followingSystem = false;
+    browser.theme.reset();
   }
-  else browser.theme.reset();
 }
 
 // A short brighter frame when the battery drops through 20% and 10%, so the
@@ -228,7 +232,7 @@ let lastView = null; // re-rendered when settings change
 function render(view) {
   const previous = lastView;
   lastView = view;
-  if (view.kind === "battery") noteHelperDark(view.state.dark);
+  if (view.kind === "battery") helperDark = typeof view.state.dark === "boolean" ? view.state.dark : null;
   const viewKey = JSON.stringify({ view, settings, dark: resolvedDark() });
   if (painted.viewKey === viewKey) return; // nothing changed — no work at all
   painted.viewKey = viewKey;
@@ -298,6 +302,8 @@ const ready = Promise.all([
     // The stored view carries the resolved light/dark; put the helper's own
     // value back so a later OS change can still override it.
     if (lastView && lastView.kind === "battery") lastView.state.dark = helperDark;
+    followingSystem =
+      !!painted.themeKey && painted.themeKey !== "reset" && settings.appearance === "auto" && settings.enabled;
     if (Number.isInteger(session.failures)) failures = session.failures;
     if (Number.isInteger(session.quickDeaths)) quickDeaths = session.quickDeaths;
     settings = Colors.normalizeSettings(local.settings);
@@ -449,14 +455,22 @@ if (reducedMotion) {
 }
 
 if (darkQuery) {
-  darkQuery.addEventListener("change", () => {
-    ready.then(() => {
-      // With a forced appearance, web content follows our theme, so this
-      // query only echoes our own choice.
-      if (settings.appearance !== "auto") return;
-      osDarkAt = Date.now();
-      if (lastView) render(lastView);
-    });
+  darkQuery.addEventListener("change", async () => {
+    await ready;
+    // The query also flips when someone else's theme replaces ours. That says
+    // nothing about the system, and reacting to it would have us repaint in
+    // step with the other theme.
+    let current = null;
+    try {
+      current = await browser.theme.getCurrent();
+    } catch (err) {}
+    const ours = !!(current && current.colors && current.colors.frame === paintedFrame &&
+      current.properties && current.properties.color_scheme === "system");
+    if (!ours) {
+      followingSystem = false;
+      return;
+    }
+    if (lastView) render(lastView); // does nothing unless the resolved appearance changed
   });
 }
 

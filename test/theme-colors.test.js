@@ -62,8 +62,11 @@ test("theme output is well-formed", () => {
   for (const [key, value] of Object.entries(theme.colors)) {
     assert.match(value, /^rgb\(\d{1,3}, \d{1,3}, \d{1,3}\)$/, key);
   }
-  assert.strictEqual(theme.properties.color_scheme, "dark");
-  assert.strictEqual(C.buildTheme(state(42, "battery", false), null).theme.properties.color_scheme, "light");
+  // Following the OS asks Firefox for the system scheme; a forced appearance names it.
+  assert.strictEqual(theme.properties.color_scheme, "system");
+  assert.strictEqual(C.buildTheme(state(42, "battery", false), null).theme.properties.color_scheme, "system");
+  assert.strictEqual(C.buildTheme(state(42), { appearance: "dark" }).theme.properties.color_scheme, "dark");
+  assert.strictEqual(C.buildTheme(state(42), { appearance: "light" }).theme.properties.color_scheme, "light");
 });
 
 test("quiet when healthy, loud when low (both palettes, both modes)", () => {
