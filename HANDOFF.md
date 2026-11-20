@@ -119,7 +119,7 @@ All in `extension/theme-colors.js`; `preview.html` shows every state.
 | Command | What it runs |
 | --- | --- |
 | `npm test` | 97 unit tests: helpers against fake batteries, installers against throwaway homes, colour model, snapshot, colour-blind simulation, package promises. Windows helper tests need Docker or PowerShell and skip without. |
-| `npm run test:e2e` | 21 end-to-end tests in a real Firefox (`FIREFOX_BIN` picks the build). |
+| `npm run test:e2e` | 21 end-to-end tests in a real Firefox (`FIREFOX_BIN` picks the build); two skip by default (Windows-only, and right-to-left without a language pack). |
 | `npm run check` | `npm test` + web-ext lint + `check:zip`. |
 | `npm run check:zip` | Builds the store zip and checks it holds exactly `extension/`. |
 | `npm run check:shell` | shellcheck + `bash -n` with the stock bash. |
@@ -135,13 +135,13 @@ Right-to-left needs Mozilla's Arabic language pack for the exact Firefox version
 
 ### What has been run where (2026-11-20)
 
-| Firefox | Result |
+| Firefox | End-to-end result |
 | --- | --- |
-| 160.0 release, macOS | 21/21 |
-| 161.0b4 Developer Edition, macOS | pass (RTL skipped) |
-| 140.0 ESR, macOS | pass, incl. RTL (vertical-tabs test skipped by design) |
-| 153.7 ESR, Debian in Docker | pass with the real Linux helper |
-| 160.0.1 release, Debian in Docker | pass with the real Linux helper |
+| 160.0 release, macOS | 19 pass, 2 skipped (Windows-only test; RTL test passes when given the language pack) |
+| 161.0b4 Developer Edition, macOS | 19 pass, 2 skipped (same two; RTL not run here) |
+| 140.0 ESR, macOS, with the Arabic pack | 19 pass, 2 skipped (Windows-only; vertical-tabs test is for 157+) |
+| 160.0.1 release, Debian in Docker | 19 pass, 2 skipped, with the real Linux helper |
+| 153.7 ESR, Debian in Docker | 18 pass, 3 skipped, with the real Linux helper |
 | 160.0.1 Flatpak, Debian in Docker | helper starts and themes (manual experiment, not in the suite) |
 | Any Firefox on Windows | **never run** |
 | Snap Firefox | **never run** |
