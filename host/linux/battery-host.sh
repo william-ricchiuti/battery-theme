@@ -21,6 +21,7 @@ emit() {
     local message="$1"
     local n
     LC_ALL=C n=${#message}
+    # shellcheck disable=SC2059  # the format string is the four length bytes, built on purpose
     printf "\\x$(printf '%02x' $((n & 0xFF)))\\x$(printf '%02x' $(((n >> 8) & 0xFF)))\\x$(printf '%02x' $(((n >> 16) & 0xFF)))\\x$(printf '%02x' $(((n >> 24) & 0xFF)))"
     printf '%s' "$message"
 }
@@ -40,7 +41,10 @@ low_power=false
 refresh_slow() {
     local scheme profile
     dark=null
-    if command -v gsettings >/dev/null 2>&1; then
+    # Inside a Flatpak sandbox gsettings answers from an empty store, not the
+    # desktop's, so its answer is not trusted there (the extension then asks
+    # Firefox itself).
+    if [ -z "${FLATPAK_ID:-}" ] && command -v gsettings >/dev/null 2>&1; then
         scheme="$(gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null)"
         case "$scheme" in
             *prefer-dark*) dark=true ;;
@@ -69,9 +73,18 @@ read_state() {
                 [ "$REPLY" = 1 ] && on_ac=true
                 ;;
             Battery)
-                # Skip batteries of peripherals (mice, headsets).
+                # Skip batteries of peripherals (mice, keyboards, headsets,
+                # game controllers). The kernel marks them scope=Device; for
+                # drivers that leave scope out, go by the names those drivers
+                # use, so a wireless mouse is never taken for the laptop.
                 read_file "$d/scope"; scope="$REPLY"
                 [ "$scope" = Device ] && continue
+                if [ -z "$scope" ]; then
+                    case "${d##*/}" in
+                        hid-*|hidpp_battery_*|wacom_*|sony_controller_battery_*|ps-controller-battery-*|\
+                        nintendo_switch_controller_battery_*|steam-controller-*|apple_mfi_*|wiimote_battery_*) continue ;;
+                    esac
+                fi
                 read_file "$d/capacity"
                 is_uint "$REPLY" || continue
                 count=$((count + 1))
@@ -180,12 +193,35 @@ send_state
 # that started us is still there and shuts everything down if it is not.
 main_pid=$$
 browser_pid=$PPID
+
+# Waiting without starting a `sleep` process every few seconds: `read` with a
+# timeout on a pipe nobody writes to. Whole seconds only on old bash, so any
+# other interval (and any failure to set the pipe up) falls back to sleep.
+wait_dir=""
+case "$POLL" in
+    ''|*[!0-9]*) ;;
+    *)
+        wait_dir="$(mktemp -d "${TMPDIR:-/tmp}/battery-theme.XXXXXX" 2>/dev/null)" &&
+            mkfifo "$wait_dir/wait" 2>/dev/null &&
+            exec 3<>"$wait_dir/wait" || wait_dir=""
+        # The pipe stays open through fd 3; its name is no longer needed.
+        [ -n "$wait_dir" ] && rm -rf "$wait_dir"
+        ;;
+esac
+pause() {
+    if [ -n "$wait_dir" ]; then
+        read -r -t "$POLL" -u 3 _ || true
+    else
+        sleep "$POLL" &
+        wait $!
+    fi
+}
+
 (
     trap 'exit 0' TERM INT HUP PIPE
     tick=0
     while :; do
-        sleep "$POLL" &
-        wait $!
+        pause
         if ! kill -0 "$browser_pid" 2>/dev/null; then
             # Ends the main process's `cat` (and this loop), which lets the
             # main process run its normal cleanup and exit.
