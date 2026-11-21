@@ -114,3 +114,22 @@ test("streams a framed message at start and on a power event, then exits when st
   const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 3000))]);
   assert.strictEqual(code, 0, "host exits cleanly when Firefox closes stdin");
 });
+
+test("desktop Mac on a UPS: the UPS is not treated as a laptop battery", () => {
+  const onMains = stateFor("Now drawing from 'AC Power'\n -UPS CP1500 (id=1234)\t100%; charging present: true\n");
+  assert.deepStrictEqual([onMains.has_battery, onMains.percentage, onMains.on_ac], [false, null, true]);
+  const onUps = stateFor("Now drawing from 'UPS Power'\n -UPS CP1500 (id=1234)\t64%; discharging; 0:22 remaining present: true\n");
+  assert.deepStrictEqual([onUps.has_battery, onUps.percentage], [false, null]);
+});
+
+test("odd pmset output: empty, garbage, 0% and 100% all give a valid message", () => {
+  for (const text of ["", "pmset: command failed\n", "Now drawing from 'Battery Power'\n"]) {
+    const s = stateFor(text);
+    assert.strictEqual(s.has_battery, false, JSON.stringify(text));
+    assert.strictEqual(s.v, 1);
+  }
+  const zero = stateFor("Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t0%; discharging; (no estimate) present: true\n");
+  assert.deepStrictEqual([zero.has_battery, zero.percentage, zero.minutes_remaining], [true, 0, null]);
+  const full = stateFor("Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t100%; charged; 0:00 remaining present: true\n");
+  assert.deepStrictEqual([full.percentage, full.charged, full.on_ac], [100, true, true]);
+});

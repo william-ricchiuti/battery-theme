@@ -24,6 +24,7 @@ emit() {
     local message="$1"
     local n
     LC_ALL=C n=${#message}
+    # shellcheck disable=SC2059  # the format string is the four length bytes, built on purpose
     printf "\\x$(printf '%02x' $((n & 0xFF)))\\x$(printf '%02x' $(((n >> 8) & 0xFF)))\\x$(printf '%02x' $(((n >> 16) & 0xFF)))\\x$(printf '%02x' $(((n >> 24) & 0xFF)))"
     printf '%s' "$message"
 }

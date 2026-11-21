@@ -1,0 +1,129 @@
+# PROPOSAL, NOT ACTIVE. GitHub only runs workflows from .github/workflows/.
+# To turn it on: copy this file to .github/workflows/ci.yml and push.
+# Public repositories get these runners free of charge.
+#
+# What has and has not been run before:
+#   - Every Linux and macOS step below has been run by hand (macOS locally,
+#     Linux in Docker) and passed.
+#   - The Windows job has never run anywhere. It will be the first time the
+#     Windows helper, install.bat and uninstall.bat meet real Windows, so
+#     expect to fix things on the first run. The runner has no battery, so it
+#     proves "starts, installs, speaks the protocol, reports no battery", not
+#     real battery readings.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests, lint, zip (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests (helpers, colour model, installers, package promises)
+        run: npm test
+      - name: web-ext lint
+        run: npm run lint
+      - name: Store zip matches extension/
+        run: npm run check:zip
+      - name: shellcheck and bash syntax
+        if: runner.os == 'Linux'
+        run: npm run check:shell
+      - name: Scripts parse with the stock macOS bash 3.2
+        if: runner.os == 'macOS'
+        run: |
+          /bin/bash --version | head -1
+          for f in install.sh host/mac/*.sh host/linux/*.sh userChrome/*.sh; do /bin/bash -n "$f"; done
+
+  e2e:
+    name: Real Firefox (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Linux, current release", os: ubuntu-24.04, firefox: release }
+          - { name: "Linux, 140 ESR (minimum supported)", os: ubuntu-24.04, firefox: "140.0esr" }
+          - { name: "macOS, current release", os: macos-15, firefox: preinstalled }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Get Firefox from Mozilla
+        if: matrix.firefox != 'preinstalled'
+        run: |
+          if [ "${{ matrix.firefox }}" = release ]; then
+            url="https://download.mozilla.org/?product=firefox-latest-ssl&os=linux64&lang=en-US"
+          else
+            url="https://ftp.mozilla.org/pub/firefox/releases/${{ matrix.firefox }}/linux-x86_64/en-US/firefox-${{ matrix.firefox }}.tar.xz"
+          fi
+          curl -fsSL "$url" -o "$RUNNER_TEMP/firefox.tar.xz"
+          mkdir -p "$RUNNER_TEMP/ff" && tar -xf "$RUNNER_TEMP/firefox.tar.xz" -C "$RUNNER_TEMP/ff"
+          echo "FIREFOX_BIN=$RUNNER_TEMP/ff/firefox/firefox" >> "$GITHUB_ENV"
+          sudo apt-get update -qq && sudo apt-get install -y -qq libgtk-3-0 libdbus-glib-1-2 libasound2t64 libx11-xcb1
+      - name: Use the preinstalled Firefox
+        if: matrix.firefox == 'preinstalled'
+        run: echo "FIREFOX_BIN=/Applications/Firefox.app/Contents/MacOS/firefox" >> "$GITHUB_ENV"
+      - name: Arabic language pack for the right-to-left test
+        continue-on-error: true
+        run: |
+          v="$("$FIREFOX_BIN" --version | sed 's/[^0-9]*\([0-9][0-9.a-z]*\).*/\1/')"
+          os=$([ "$RUNNER_OS" = macOS ] && echo mac || echo linux-x86_64)
+          curl -fsSL "https://ftp.mozilla.org/pub/firefox/releases/$v/$os/xpi/ar.xpi" -o "$RUNNER_TEMP/ar.xpi" \
+            && echo "BATTERY_E2E_RTL_LANGPACK=$RUNNER_TEMP/ar.xpi" >> "$GITHUB_ENV"
+      - name: End-to-end tests (real Firefox, fake and real helper)
+        run: |
+          "$FIREFOX_BIN" --version
+          npm run test:e2e
+
+  windows:
+    name: Windows helper on real Windows (first real run)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Helper logic tests under Windows PowerShell 5.1
+        run: node --test test/host-windows.test.js
+      - name: Colour model and package tests
+        run: node --test test/theme-colors.test.js test/snapshot.test.js test/colour-vision.test.js test/package.test.js
+      - name: The real helper reads the real power status
+        shell: cmd
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File host\windows\battery-host.ps1 -Json
+      - name: install.bat, registry, uninstall.bat
+        shell: cmd
+        run: |
+          call host\windows\install.bat /quiet || exit /b 1
+          reg query "HKCU\Software\Mozilla\NativeMessagingHosts\com.williamricchiuti.batterytheme" /ve || exit /b 1
+          dir "%LOCALAPPDATA%\battery-theme"
+      - name: Firefox on Windows starts the installed helper
+        shell: bash
+        env:
+          BATTERY_E2E_WINDOWS: "1"
+        run: |
+          export FIREFOX_BIN="C:\\Program Files\\Mozilla Firefox\\firefox.exe"
+          node --test test/e2e/windows-helper.e2e.js
+      - name: uninstall.bat removes everything
+        shell: cmd
+        run: |
+          call host\windows\uninstall.bat /quiet
+          reg query "HKCU\Software\Mozilla\NativeMessagingHosts\com.williamricchiuti.batterytheme" /ve && exit /b 1
+          if exist "%LOCALAPPDATA%\battery-theme\battery-host.ps1" exit /b 1
+          exit /b 0

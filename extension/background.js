@@ -26,17 +26,18 @@ let settings = Colors.normalizeSettings(null);
 // ---------------------------------------------------------------------------
 // Toolbar icon + badge
 // ---------------------------------------------------------------------------
-function svgIcon(inner) {
+const PLACEHOLDER_GREY = "#8f8f98"; // readable on both light and dark default toolbars
+function svgIcon(inner, outline = PLACEHOLDER_GREY) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
-  <rect x="1" y="4.5" width="11" height="7" rx="1.8" fill="none" stroke="#8f8f98" stroke-width="1.1"/>
-  <rect x="12.3" y="6.6" width="1.5" height="2.8" rx="0.75" fill="#8f8f98"/>
+  <rect x="1" y="4.5" width="11" height="7" rx="1.8" fill="none" stroke="${outline}" stroke-width="1.1"/>
+  <rect x="12.3" y="6.6" width="1.5" height="2.8" rx="0.75" fill="${outline}"/>
   ${inner}
 </svg>`;
   return "data:image/svg+xml;base64," + btoa(svg);
 }
 
 function batteryIcon(state) {
-  const built = Colors.buildTheme(state, settings);
+  const built = Colors.buildTheme(shown(state), settings);
   const fillColor = Colors.css(built.accent);
   const w = Math.max(1.6, (state.percentage / 100) * 9.6);
   // The bolt pokes outside the battery body, so it must read on the toolbar.
@@ -44,13 +45,16 @@ function batteryIcon(state) {
   const bolt = state.on_ac
     ? `<path d="M 9.6 1.6 L 5.2 8.8 L 8 8.8 L 6.4 14.4 L 11 7 L 8.2 7 Z" fill="${boltColor}" stroke="${fillColor}" stroke-width="0.4"/>`
     : "";
-  return svgIcon(`<rect x="2.2" y="5.7" width="${w}" height="4.6" rx="0.9" fill="${fillColor}"/>${bolt}`);
+  // While we tint the toolbar, the outline takes the theme's icon colour so
+  // it stays visible on it; paused, the toolbar is the user's own.
+  const outline = settings.enabled ? Colors.css(built.raw.icons) : PLACEHOLDER_GREY;
+  return svgIcon(`<rect x="2.2" y="5.7" width="${w}" height="4.6" rx="0.9" fill="${fillColor}"/>${bolt}`, outline);
 }
 
 // Empty battery outline with a mark in it: "?" = no data, "-" = no battery.
 function placeholderIcon(mark) {
   return svgIcon(
-    `<text x="6.5" y="10.6" font-family="sans-serif" font-size="6.5" font-weight="700" text-anchor="middle" fill="#8f8f98">${mark}</text>`
+    `<text x="6.5" y="10.6" font-family="sans-serif" font-size="6.5" font-weight="700" text-anchor="middle" fill="${PLACEHOLDER_GREY}">${mark}</text>`
   );
 }
 
@@ -122,6 +126,41 @@ let bootRepaintPending = false;
 const MAX_REPAINTS_PER_MINUTE = 3;
 const BOOT_REPAINT_MS = 4000;
 
+// Light or dark, when the Appearance setting is "Match system".
+//
+// The theme is applied with color_scheme "system" (see theme-colors.js), and
+// this background page then sees the browser's own idea of the system
+// setting through prefers-color-scheme (checked on Firefox 140 and 160; it
+// is not affected by resistFingerprinting). That is immediate and works on
+// every OS, including where the helper cannot tell (it sends dark:null on
+// KDE, Xfce, Flatpak and older Windows helpers).
+//
+// The query only means "the system" while our own system-following theme is
+// the one applied; under the user's own theme it reports that theme instead.
+// So until our theme is up, the helper's `dark` field is the first guess,
+// and if that guess was wrong the query changes right after the first paint
+// and the theme is painted again.
+const darkQuery = globalThis.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
+let helperDark = null;        // last `dark` from the helper (null = it cannot tell)
+let followingSystem = false;  // our theme with color_scheme "system" is applied
+let paintedFrame = null;      // frame colour of our last paint, to recognise our own theme
+// Asked afresh every time: on Firefox 140 a kept MediaQueryList goes stale in
+// this (never displayed) page, while a new query gives the current answer.
+const systemIsDark = () => matchMedia("(prefers-color-scheme: dark)").matches;
+function resolvedDark() {
+  if (darkQuery && followingSystem) return systemIsDark();
+  if (helperDark !== null) return helperDark;
+  return darkQuery ? systemIsDark() : null;
+}
+// The state as it is drawn: the helper's reading with light/dark resolved.
+function shown(state) {
+  return { ...state, dark: resolvedDark() };
+}
+
+// Right-to-left Firefox (Arabic, Hebrew, Persian...) lays its tabs out from
+// the right, so the gauge fills from the right too.
+const RTL = browser.i18n.getMessage("@@bidi_dir") === "rtl";
+
 // The OS "reduce motion" setting switches off the flash even when the
 // extension's own motion setting is on.
 const reducedMotion = globalThis.matchMedia ? matchMedia("(prefers-reduced-motion: reduce)") : null;
@@ -133,8 +172,15 @@ function paintTheme(view, opts) {
   ownUpdates += 1;
   clearTimeout(ownUpdatesTimer);
   ownUpdatesTimer = setTimeout(() => (ownUpdates = 0), 2000); // some calls produce no event
-  if (view.kind === "battery") browser.theme.update(Colors.buildTheme(view.state, paintSettings(), opts).theme);
-  else browser.theme.reset();
+  if (view.kind === "battery") {
+    const { theme } = Colors.buildTheme(shown(view.state), paintSettings(), { ...opts, rtl: RTL });
+    browser.theme.update(theme);
+    followingSystem = settings.appearance === "auto";
+    paintedFrame = theme.colors.frame;
+  } else {
+    followingSystem = false;
+    browser.theme.reset();
+  }
 }
 
 // A short brighter frame when the battery drops through 20% and 10%, so the
@@ -181,7 +227,9 @@ browser.theme.onUpdated.addListener(() => {
 // Also publishes the current view for the popup, which reads it from
 // storage.session and follows changes via storage.onChanged.
 function savePainted() {
-  browser.storage.session.set({ painted, view: lastView }).catch(() => {});
+  // `dark` is the resolved light/dark, so the popup draws what the chrome shows.
+  const view = lastView && lastView.kind === "battery" ? { ...lastView, state: shown(lastView.state) } : lastView;
+  browser.storage.session.set({ painted, view, helperDark }).catch(() => {});
 }
 
 // view: { kind: "battery", state } | { kind: "no-battery" } | { kind: "no-host" }
@@ -191,7 +239,8 @@ let lastView = null; // re-rendered when settings change
 function render(view) {
   const previous = lastView;
   lastView = view;
-  const viewKey = JSON.stringify({ view, settings });
+  if (view.kind === "battery") helperDark = typeof view.state.dark === "boolean" ? view.state.dark : null;
+  const viewKey = JSON.stringify({ view, settings, dark: resolvedDark() });
   if (painted.viewKey === viewKey) return; // nothing changed — no work at all
   painted.viewKey = viewKey;
 
@@ -201,7 +250,7 @@ function render(view) {
     // theme is handed back to the user.
     if (settings.enabled) {
       const ps = paintSettings();
-      setTheme(Colors.themeKey(state, ps), view);
+      setTheme(Colors.themeKey(shown(state), ps), view);
       const drained =
         previous && previous.kind === "battery" && !state.on_ac && !previous.state.on_ac &&
         Colors.crossesPulse(previous.state.percentage, state.percentage);
@@ -239,6 +288,7 @@ const FAILURES_BEFORE_SLOW = 5;
 const STABLE_MS = 30000;          // a port that lived this long counts as healthy
 const QUICK_DEATHS_BEFORE_GIVING_UP = 3;
 const HOLD_MS = 5000;             // how long a suspect helper must stay up before we trust it
+const FIRST_MESSAGE_MS = 8000;    // a helper that has said nothing by now is shown as not connected
 
 let port = null;
 let failures = 0;
@@ -248,13 +298,19 @@ let failures = 0;
 let quickDeaths = 0;
 
 const ready = Promise.all([
-  browser.storage.session.get(["painted", "failures", "view", "quickDeaths"]),
+  browser.storage.session.get(["painted", "failures", "view", "quickDeaths", "helperDark"]),
   browser.storage.local.get("settings"),
 ])
   .then(([session, local]) => {
     if (session.painted) painted = session.painted;
     else bootRepaintPending = true; // nothing painted yet this browser session
     if (session.view) lastView = session.view;
+    if (typeof session.helperDark === "boolean") helperDark = session.helperDark;
+    // The stored view carries the resolved light/dark; put the helper's own
+    // value back so a later OS change can still override it.
+    if (lastView && lastView.kind === "battery") lastView.state.dark = helperDark;
+    followingSystem =
+      !!painted.themeKey && painted.themeKey !== "reset" && settings.appearance === "auto" && settings.enabled;
     if (Number.isInteger(session.failures)) failures = session.failures;
     if (Number.isInteger(session.quickDeaths)) quickDeaths = session.quickDeaths;
     settings = Colors.normalizeSettings(local.settings);
@@ -318,12 +374,21 @@ function connect() {
     if (port === p) setQuickDeaths(0);
   }, STABLE_MS);
 
+  // A helper that starts but never sends a reading (hung, or the wrong
+  // program) would otherwise leave the popup on "Connecting…" forever, or an
+  // old reading on screen. The port stays open: if it does speak later, its
+  // reading is shown as usual.
+  const silentTimer = setTimeout(() => {
+    if (port === p && !gotMessage) render({ kind: "no-host" });
+  }, FIRST_MESSAGE_MS);
+
   p.onMessage.addListener((msg) => {
     if (!isValidState(msg)) {
       console.warn("Battery Theme: ignoring unexpected host message:", msg);
       return;
     }
     gotMessage = true;
+    clearTimeout(silentTimer);
     noteSuccess();
     if (quickDeaths < QUICK_DEATHS_BEFORE_GIVING_UP) {
       render(viewFor(msg));
@@ -344,6 +409,7 @@ function connect() {
     if (port === p) port = null;
     clearTimeout(stableTimer);
     clearTimeout(holdTimer);
+    clearTimeout(silentTimer);
     const reason = p.error ? p.error.message : "host exited";
     console.warn("Battery Theme: host disconnected:", reason);
     if (gotMessage && Date.now() - connectedAt > STABLE_MS) {
@@ -377,7 +443,14 @@ browser.alarms.onAlarm.addListener((alarm) => {
 
 // The popup pings on open (waking this page if needed) and on "Try again".
 browser.runtime.onMessage.addListener((msg) => {
-  if (msg && (msg.type === "wake" || msg.type === "retry")) ready.then(connect);
+  if (!msg || (msg.type !== "wake" && msg.type !== "retry")) return;
+  ready.then(() => {
+    connect();
+    // Firefox 140 does not deliver the prefers-color-scheme change event to
+    // this page (160 does), so there an OS light/dark switch is picked up on
+    // the next helper message, or here when the popup opens.
+    if (lastView) render(lastView);
+  });
 });
 
 // Registering these makes Firefox start the event page on launch / update.
@@ -392,6 +465,26 @@ if (reducedMotion) {
   reducedMotion.addEventListener("change", () => {
     painted.viewKey = null; // the OS setting is not part of the view key
     if (lastView) render(lastView);
+  });
+}
+
+if (darkQuery) {
+  darkQuery.addEventListener("change", async () => {
+    await ready;
+    // The query also flips when someone else's theme replaces ours. That says
+    // nothing about the system, and reacting to it would have us repaint in
+    // step with the other theme.
+    let current = null;
+    try {
+      current = await browser.theme.getCurrent();
+    } catch (err) {}
+    const ours = !!(current && current.colors && current.colors.frame === paintedFrame &&
+      current.properties && current.properties.color_scheme === "system");
+    if (!ours) {
+      followingSystem = false;
+      return;
+    }
+    if (lastView) render(lastView); // does nothing unless the resolved appearance changed
   });
 }
 

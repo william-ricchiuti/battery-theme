@@ -11,18 +11,24 @@ const ROOT = path.join(__dirname, "..");
 const USERCHROME = path.join(ROOT, "userChrome", "install-userchrome.sh");
 const IMPORT = '@import "battery-theme.css"; /* Battery Theme */';
 
-// profiles: [{ dir, isDefault }] -> fake HOME with a profiles.ini
+// profiles: [{ dir, isDefault, inUse }] -> fake HOME with a profiles.ini.
+// inUse gives the profile an [Install...] section, which is how Firefox
+// records the profile each installed Firefox (release, Developer Edition...)
+// actually starts with.
 function fakeHome(profiles) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "bt-home-"));
-  const ff = path.join(home, "Library", "Application Support", "Firefox");
-  let ini = "[General]\nStartWithLastProfile=1\n\n[Install2656FF1E876E9973]\nDefault=Profiles/whatever\n\n";
+  const ff = process.platform === "darwin"
+    ? path.join(home, "Library", "Application Support", "Firefox")
+    : path.join(home, ".mozilla", "firefox");
+  let ini = "[General]\nStartWithLastProfile=1\nVersion=2\n\n[Install2656FF1E876E9973]\nDefault=Profiles/whatever\n\n";
   profiles.forEach((p, i) => {
     fs.mkdirSync(path.join(ff, "Profiles", p.dir), { recursive: true });
+    if (p.inUse) ini += `[Install${String(i).repeat(16)}]\nDefault=Profiles/${p.dir}\nLocked=1\n\n`;
     ini += `[Profile${i}]\nName=${p.dir}\nIsRelative=1\nPath=Profiles/${p.dir}\n${p.isDefault ? "Default=1\n" : ""}\n`;
   });
   fs.mkdirSync(ff, { recursive: true });
   fs.writeFileSync(path.join(ff, "profiles.ini"), ini);
-  return { home, chrome: (dir) => path.join(ff, "Profiles", dir, "chrome") };
+  return { home, ff, chrome: (dir) => path.join(ff, "Profiles", dir, "chrome") };
 }
 
 const run = (script, home, args = []) =>
@@ -79,9 +85,57 @@ test("several profiles: uses the one marked default, refuses to guess otherwise"
   assert.match(r.stderr, /--profile/);
   assert.ok(!fs.existsSync(b.chrome("one")) && !fs.existsSync(b.chrome("two")), "nothing written when ambiguous");
 
-  const explicit = path.join(b.home, "Library", "Application Support", "Firefox", "Profiles", "two");
+  const explicit = path.join(b.ff, "Profiles", "two");
   assert.strictEqual(run(USERCHROME, b.home, ["--profile", explicit]).status, 0);
   assert.ok(fs.existsSync(path.join(b.chrome("two"), "battery-theme.css")));
+});
+
+test("a normal modern setup: the profile Firefox really uses wins over the old one marked Default=1", () => {
+  // What a fresh Firefox creates: an unused "default" with Default=1, and "default-release" tied to the install.
+  const h = fakeHome([{ dir: "aaaa.default", isDefault: true }, { dir: "bbbb.default-release", inUse: true }]);
+  const r = run(USERCHROME, h.home);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(h.chrome("bbbb.default-release"), "battery-theme.css")), "installed into the profile in use");
+  assert.ok(!fs.existsSync(h.chrome("aaaa.default")), "the unused legacy profile is left alone");
+  assert.match(run(USERCHROME, h.home, ["--list"]).stdout, /bbbb\.default-release {2}\(in use by an installed Firefox\)/);
+});
+
+test("Firefox and Developer Edition side by side: asks which, --all does both, uninstall --all undoes both", () => {
+  const h = fakeHome([
+    { dir: "aaaa.default", isDefault: true },
+    { dir: "bbbb.default-release", inUse: true },
+    { dir: "cccc.dev-edition-default", inUse: true },
+  ]);
+  const r = run(USERCHROME, h.home);
+  assert.strictEqual(r.status, 1);
+  assert.match(r.stderr, /More than one Firefox/);
+  assert.match(r.stderr, /bbbb\.default-release/);
+  assert.match(r.stderr, /cccc\.dev-edition-default/);
+  assert.doesNotMatch(r.stderr, /aaaa\.default\n/, "the unused profile is not offered");
+  for (const d of ["aaaa.default", "bbbb.default-release", "cccc.dev-edition-default"]) {
+    assert.ok(!fs.existsSync(h.chrome(d)), "nothing written when it has to ask");
+  }
+
+  assert.strictEqual(run(USERCHROME, h.home, ["--all"]).status, 0);
+  assert.ok(fs.existsSync(path.join(h.chrome("bbbb.default-release"), "battery-theme.css")));
+  assert.ok(fs.existsSync(path.join(h.chrome("cccc.dev-edition-default"), "battery-theme.css")));
+  assert.ok(!fs.existsSync(h.chrome("aaaa.default")));
+
+  assert.strictEqual(run(USERCHROME, h.home, ["--uninstall", "--all"]).status, 0);
+  assert.ok(!fs.existsSync(path.join(h.chrome("bbbb.default-release"), "battery-theme.css")));
+  assert.ok(!fs.existsSync(path.join(h.chrome("cccc.dev-edition-default"), "battery-theme.css")));
+});
+
+test("a profile path with spaces, an absolute path (IsRelative=0) and Windows line endings in profiles.ini", () => {
+  const h = fakeHome([]);
+  const odd = path.join(h.home, "My Profiles", "work profile");
+  fs.mkdirSync(odd, { recursive: true });
+  fs.writeFileSync(path.join(h.ff, "profiles.ini"),
+    `[General]\r\nVersion=2\r\n\r\n[Profile0]\r\nName=work\r\nIsRelative=0\r\nPath=${odd}\r\nDefault=1\r\n`);
+  const r = run(USERCHROME, h.home);
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.ok(fs.existsSync(path.join(odd, "chrome", "battery-theme.css")));
+  assert.strictEqual(run(USERCHROME, h.home, ["--profile"]).status, 2, "--profile without a folder is a usage error");
 });
 
 test("no profiles: fails with guidance and writes nothing", () => {

@@ -149,3 +149,47 @@ test("streams a framed message at start and when the state changes, then exits w
   const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 3000))]);
   assert.strictEqual(code, 0, "host exits cleanly when Firefox closes stdin");
 });
+
+test("a peripheral battery with no scope file is not taken for the laptop battery", () => {
+  for (const name of ["hid-00:1f:20:aa:bb:cc-battery", "hidpp_battery_3", "wacom_battery_0",
+    "sony_controller_battery_00:11:22:33:44:55", "ps-controller-battery-00:11:22:33:44:55", "apple_mfi_fastcharge"]) {
+    const alone = stateFor({ [name]: { type: "Battery", capacity: 9, status: "Discharging" }, AC: { type: "Mains", online: 1 } });
+    assert.strictEqual(alone.has_battery, false, `${name} alone: desktop with a wireless device`);
+    const withLaptop = stateFor({
+      [name]: { type: "Battery", capacity: 9, status: "Discharging" },
+      BAT0: { type: "Battery", capacity: 80, status: "Discharging" },
+    });
+    assert.strictEqual(withLaptop.percentage, 80, `${name} does not drag the laptop reading down`);
+  }
+  // A laptop battery without a scope file (older kernels) still counts, whatever it is called.
+  for (const name of ["BAT0", "BAT1", "CMB0", "macsmc-battery", "battery"]) {
+    assert.strictEqual(stateFor({ [name]: { type: "Battery", capacity: 41, status: "Discharging" } }).percentage, 41, name);
+  }
+});
+
+test("a UPS on a desktop is not a laptop battery", () => {
+  const s = stateFor({ ups: { type: "UPS", capacity: 100, status: "Full", online: 1 }, AC: { type: "Mains", online: 1 } });
+  assert.strictEqual(s.has_battery, false);
+});
+
+test("inside a Flatpak sandbox the light/dark answer of gsettings is not trusted", () => {
+  const supplies = { BAT0: battery({ capacity: 60, status: "Discharging" }) };
+  const e = env(sysfs(supplies), { tools: true });
+  const s = JSON.parse(spawnSync("/bin/bash", [HOST, "--json"], { env: { ...e, FLATPAK_ID: "org.mozilla.firefox" }, encoding: "utf8" }).stdout);
+  assert.strictEqual(s.dark, null);
+});
+
+test("at the default 5s poll: exits within a second of stdin closing, and starts no sleep processes", async () => {
+  const dir = sysfs({ BAT0: battery({ capacity: 55, status: "Discharging" }) });
+  const child = spawn("/bin/bash", [HOST], { env: env(dir) });
+  await new Promise((r) => setTimeout(r, 800));
+  const sleeps = spawnSync("pgrep", ["-g", String(child.pid), "sleep"], { encoding: "utf8" }).stdout.trim() ||
+    spawnSync("pgrep", ["-P", String(child.pid), "sleep"], { encoding: "utf8" }).stdout.trim();
+  assert.strictEqual(sleeps, "", "waits with a shell builtin, not a sleep process");
+  const started = Date.now();
+  const exited = new Promise((r) => child.on("exit", r));
+  child.stdin.end();
+  const code = await Promise.race([exited, new Promise((r) => setTimeout(() => r("timeout"), 4000))]);
+  assert.strictEqual(code, 0);
+  assert.ok(Date.now() - started < 1500, `exit took ${Date.now() - started}ms`);
+});
